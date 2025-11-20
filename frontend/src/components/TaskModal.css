@@ -1,0 +1,132 @@
+.task-modal {
+  max-width: 800px;
+  max-height: 90vh;
+}
+
+.btn-schedule {
+  background: #10b981;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.btn-schedule:hover:not(:disabled) {
+  background: #059669;
+}
+
+.btn-prep {
+  background: #8b5cf6;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.btn-prep:hover:not(:disabled) {
+  background: #7c3aed;
+}
+
+.prep-material-section {
+  border-top: 2px solid #eee;
+  margin-top: 20px;
+  padding: 20px;
+  background: #f8f9fa;
+  border-radius: 0 0 12px 12px;
+}
+
+.prep-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.prep-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+.btn-regenerate {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.btn-regenerate:hover:not(:disabled) {
+  background: #5568d3;
+}
+
+.prep-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.prep-section {
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+}
+
+.prep-section h4 {
+  margin: 0 0 15px 0;
+  color: #667eea;
+  font-size: 16px;
+}
+
+.flashcard {
+  background: #f0f4ff;
+  padding: 12px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  border-left: 4px solid #667eea;
+}
+
+.quiz-question {
+  margin-bottom: 15px;
+}
+
+.quiz-question p {
+  margin: 0 0 10px 0;
+}
+
+.quiz-question ul {
+  list-style: none;
+  padding: 0;
+}
+
+.quiz-question li {
+  padding: 8px 12px;
+  background: #f8f9fa;
+  margin-bottom: 5px;
+  border-radius: 4px;
+}
+
+.quiz-question li.correct {
+  background: #d1fae5;
+  font-weight: 600;
+}
+
+.prep-section ul, .prep-section ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.prep-section li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}

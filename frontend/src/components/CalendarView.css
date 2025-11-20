@@ -1,0 +1,78 @@
+.calendar-view {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.calendar-header h2 {
+  margin: 0;
+  color: #333;
+}
+
+.legend {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  color: #666;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.calendar-container {
+  background: white;
+}
+
+/* FullCalendar customization */
+.fc {
+  font-family: inherit;
+}
+
+.fc .fc-button-primary {
+  background-color: #667eea;
+  border-color: #667eea;
+}
+
+.fc .fc-button-primary:hover {
+  background-color: #5568d3;
+  border-color: #5568d3;
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active {
+  background-color: #4c51bf;
+  border-color: #4c51bf;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+@media (max-width: 768px) {
+  .calendar-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
