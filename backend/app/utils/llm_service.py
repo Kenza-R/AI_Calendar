@@ -2,6 +2,7 @@ from openai import OpenAI
 from typing import List, Dict, Optional
 import json
 from datetime import datetime
+import re
 from app.config import settings
 
 # Initialize OpenAI client
@@ -18,41 +19,94 @@ def extract_deadlines_from_text(text: str, context: str = "syllabus") -> List[Di
         return _generate_sample_deadlines(text)
     
     try:
-        prompt = f"""
-        Analyze the following {context} and extract all deadlines, assignments, exams, 
-        interviews, and important dates. For each item, provide:
-        - title: The name/title of the item
-        - date: The date (in ISO format YYYY-MM-DD if possible, or the date as stated)
-        - type: The type (exam, assignment, interview, deadline, reading, etc.)
-        - description: A brief description
-        - estimated_hours: Estimated hours needed for preparation (integer)
-        
-        Return the results as a JSON array.
-        
-        Text:
-        {text[:3000]}  # Limit to first 3000 chars to avoid token limits
-        """
+        prompt = f"""You are an expert at extracting deadline and assignment information from academic syllabi and documents.
+
+Analyze the following {context} text and extract EVERY single deadline, assignment, exam, quiz, presentation, paper, project, and important date mentioned.
+
+For EACH deadline/assignment found, return valid JSON in exactly this format:
+[
+  {{
+    "title": "Exact assignment/exam name from syllabus",
+    "date": "YYYY-MM-DD format or best estimate if fuzzy",
+    "type": "assignment|exam|quiz|presentation|paper|deadline|reading|project|interview",
+    "description": "What student needs to do",
+    "estimated_hours": number between 1 and 20
+  }}
+]
+
+CRITICAL REQUIREMENTS:
+1. Extract EVERY deadline mentioned - do not skip any
+2. Convert all dates to YYYY-MM-DD format when possible
+3. If you see "Due January 20", "Due Feb 3", "March 9" - convert these to dates
+4. Include the full descriptive title from the syllabus
+5. Return ONLY valid JSON array, nothing else
+6. If it looks like a deadline, include it
+7. Be exhaustive - extract more items rather than fewer
+
+Syllabus text:
+{text[:6000]}"""
         
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are an expert at extracting deadline information from academic and professional documents."},
+                {"role": "system", "content": "You are an expert at extracting ALL deadline and assignment information. Return ONLY valid JSON array, no other text."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
+            temperature=0.1,  # Lower temperature for consistency
         )
         
-        result = response.choices[0].message.content
-        # Try to parse as JSON
-        try:
-            deadlines = json.loads(result)
-            return deadlines if isinstance(deadlines, list) else []
-        except json.JSONDecodeError:
-            return []
+        result = response.choices[0].message.content.strip()
+        
+        # Try to extract JSON from the response
+        deadlines = _parse_json_response(result)
+        
+        # If we got results, validate and return
+        if deadlines and len(deadlines) > 0:
+            return deadlines
+        
+        # Fallback: try keyword extraction if JSON parsing fails
+        print(f"JSON parsing failed, falling back to keyword extraction")
+        return _extract_deadlines_by_keywords(text)
     
     except Exception as e:
-        print(f"Error extracting deadlines: {str(e)}")
-        return _generate_sample_deadlines(text)
+        print(f"Error extracting deadlines with OpenAI: {str(e)}")
+        return _extract_deadlines_by_keywords(text)
+
+
+def _parse_json_response(response: str) -> List[Dict]:
+    """Safely parse JSON response from LLM, handling various formats."""
+    try:
+        # Try direct JSON parse first
+        return json.loads(response)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to extract JSON from the response text
+    try:
+        # Look for JSON array pattern
+        json_match = re.search(r'\[.*\]', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json.loads(json_str)
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    
+    # Try to extract JSON objects
+    try:
+        json_match = re.findall(r'\{.*?\}', response, re.DOTALL)
+        if json_match:
+            items = []
+            for match in json_match:
+                try:
+                    items.append(json.loads(match))
+                except json.JSONDecodeError:
+                    continue
+            if items:
+                return items
+    except Exception:
+        pass
+    
+    return []
 
 
 def generate_prep_material(task_title: str, task_type: str, description: str = "") -> Dict:
@@ -122,28 +176,82 @@ def generate_prep_material(task_title: str, task_type: str, description: str = "
 
 def _generate_sample_deadlines(text: str) -> List[Dict]:
     """Generate sample deadlines when OpenAI is not configured."""
-    # Simple keyword-based extraction as fallback
-    keywords = ["exam", "assignment", "due", "deadline", "interview", "quiz", "test"]
-    lines = text.lower().split('\n')
-    
+    return _extract_deadlines_by_keywords(text)
+
+
+def _extract_deadlines_by_keywords(text: str) -> List[Dict]:
+    """Extract deadlines using keyword matching as fallback."""
     deadlines = []
-    for line in lines[:10]:  # Check first 10 lines
-        if any(keyword in line for keyword in keywords):
-            deadlines.append({
-                "title": line[:50],
-                "date": datetime.now().isoformat(),
-                "type": "deadline",
-                "description": line[:100],
-                "estimated_hours": 5
-            })
+    lines = text.split('\n')
     
-    return deadlines if deadlines else [{
-        "title": "Sample Deadline",
-        "date": datetime.now().isoformat(),
-        "type": "assignment",
-        "description": "Please configure OpenAI API key for accurate extraction",
-        "estimated_hours": 3
-    }]
+    # Keywords to look for
+    deadline_keywords = {
+        'assignment': r'(assignment|homework|work|project|task)',
+        'exam': r'(exam|examination|test|midterm|final)',
+        'quiz': r'(quiz|quizzes)',
+        'presentation': r'(presentation|present)',
+        'paper': r'(paper|essay|writing)',
+        'reading': r'(reading|read|chapter)',
+        'deadline': r'(due|deadline|submit|submission)',
+        'interview': r'(interview|phone screen)',
+        'project': r'(project|proposal)'
+    }
+    
+    # Date patterns
+    date_patterns = [
+        r'(\d{1,2}/\d{1,2}/\d{4})',  # MM/DD/YYYY
+        r'(\d{1,2}-\d{1,2}-\d{4})',  # MM-DD-YYYY
+        r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})',  # Month DD
+        r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})',  # Mon DD
+        r'Week\s+(\d{1,2})',  # Week number
+    ]
+    
+    # Extract deadlines from text
+    for i, line in enumerate(lines[:50]):  # Check first 50 lines
+        line_lower = line.lower()
+        
+        # Skip empty lines and very short lines
+        if len(line.strip()) < 5:
+            continue
+        
+        # Check for deadline keywords
+        for task_type, pattern in deadline_keywords.items():
+            if re.search(pattern, line_lower):
+                # Look for dates in this line or nearby lines
+                date_found = None
+                description = line.strip()
+                
+                # Check current line and next 3 lines for dates
+                for j in range(i, min(i + 4, len(lines))):
+                    for date_pattern in date_patterns:
+                        date_match = re.search(date_pattern, lines[j])
+                        if date_match:
+                            date_found = date_match.group(0)
+                            break
+                    if date_found:
+                        break
+                
+                if date_found or task_type:
+                    deadlines.append({
+                        "title": line.strip()[:100],
+                        "date": date_found or datetime.now().isoformat(),
+                        "type": task_type,
+                        "description": description[:200],
+                        "estimated_hours": 5
+                    })
+                    break  # Found a match for this line
+    
+    # If no deadlines found, return a message
+    if not deadlines:
+        deadlines = [{
+            "title": "Syllabus analyzed",
+            "date": datetime.now().isoformat(),
+            "type": "deadline",
+            "description": "No specific deadlines found. Please add them manually.",
+            "estimated_hours": 0
+        }]
+    
+    return deadlines
 
 
 def _generate_sample_prep_material(task_title: str, task_type: str) -> Dict:
