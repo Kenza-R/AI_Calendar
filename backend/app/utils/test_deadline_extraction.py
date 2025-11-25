@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """
 Standalone script to test deadline extraction from PDF files
 Uses snippet-based approach for reliability across different syllabi
@@ -26,16 +25,16 @@ from openai import OpenAI
 api_key_valid = settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.startswith("sk-")
 client = OpenAI(api_key=settings.OPENAI_API_KEY) if api_key_valid else None
 
-# Matches:
-#  - 6/9, 06/09, 6-9-2022, 6.9.22, 13/10/2023
-#  - Sept 11, Sep 11, September 11
+# Date regex:
+#  - numeric: 6/9, 06/09, 6.9.22, 13/10/2023   (NO hyphen to avoid '1-5' chapter junk)
+#  - text:    Sept 11, Sep 11, September 11
 DATE_REGEX = re.compile(
     r"\b("
-    r"(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?"  # numeric dd/mm(/yyyy)?
+    r"(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?"  # numeric dd/mm(/yyyy)?
     r"|"
-    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2}"  # short month names
+    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2}"  # short month names + day
     r"|"
-    r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}"  # long names
+    r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}"  # long names + day
     r")\b",
     re.IGNORECASE,
 )
@@ -67,7 +66,7 @@ def get_date_snippets(text: str, before: int = 1, after: int = 3) -> List[str]:
 def extract_date_strings(snippet: str) -> List[str]:
     """
     Extract valid date-like strings (day + month) from a snippet
-    and ignore things like academic years.
+    and ignore things like academic years or chapter ranges.
     """
     matches = DATE_REGEX.findall(snippet)
     date_strings: List[str] = []
@@ -75,32 +74,33 @@ def extract_date_strings(snippet: str) -> List[str]:
     for match in matches:
         full_match = match[0].strip()
 
-        # Check if numeric: dd/mm(/yyyy)?
-        m = re.match(r"(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$", full_match)
-        if m:
-            day, month = int(m.group(1)), int(m.group(2))
+        # 1) Numeric formats: dd/mm(/yyyy) or dd.mm(/yyyy)
+        m_num = re.match(r"^(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?$", full_match)
+        if m_num:
+            # Reject things like "1/2", "2/2" that are almost always part/section numbers
+            if re.match(r"^[1-9]/[1-9]$", full_match):
+                continue
+
+            day, month = int(m_num.group(1)), int(m_num.group(2))
             if 1 <= day <= 31 and 1 <= month <= 12:
                 date_strings.append(full_match)
             continue
 
-        # Month-name formats (e.g. "Sept 11", "September 11")
-        if any(
-            mname in full_match.lower()
-            for mname in [
-                "jan",
-                "feb",
-                "mar",
-                "apr",
-                "may",
-                "jun",
-                "jul",
-                "aug",
-                "sep",
-                "oct",
-                "nov",
-                "dec",
-            ]
-        ):
+        # 2) Month-name formats must include a numeric day on the same token
+        #    e.g. "Sept 11", "September 29"
+        m_mon = re.match(
+            r"(?i)^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}$",
+            full_match,
+        )
+        if m_mon:
+            date_strings.append(full_match)
+            continue
+
+        m_mon_long = re.match(
+            r"(?i)^(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}$",
+            full_match,
+        )
+        if m_mon_long:
             date_strings.append(full_match)
             continue
 
@@ -263,7 +263,7 @@ def extract_all_tasks_from_syllabus(text: str, show_snippets: bool = False) -> L
 
     print(f"\n✅ Analyzed {len(snippets)} snippets, gathered {len(all_items)} date-items\n")
 
-    # 4. Flatten into individual tasks (keep dates as date_string for now)
+    # 4. Flatten into individual tasks (keep dates as `date_string` for now)
     tasks: List[Dict] = []
 
     for item in all_items:
@@ -286,9 +286,11 @@ def extract_all_tasks_from_syllabus(text: str, show_snippets: bool = False) -> L
                     {
                         "date": date_string,
                         "title": t["title"],
-                        "description": f"Prep for: {session_title}"
-                        if session_title
-                        else "Preparatory reading",
+                        "description": (
+                            f"Prep for: {session_title}"
+                            if session_title
+                            else "Preparatory reading"
+                        ),
                         "type": t.get("type", "reading_preparatory"),
                     }
                 )
@@ -299,9 +301,11 @@ def extract_all_tasks_from_syllabus(text: str, show_snippets: bool = False) -> L
                     {
                         "date": date_string,
                         "title": t["title"],
-                        "description": f"For session: {session_title}"
-                        if session_title
-                        else "Mandatory reading",
+                        "description": (
+                            f"For session: {session_title}"
+                            if session_title
+                            else "Mandatory reading"
+                        ),
                         "type": t.get("type", "reading_mandatory"),
                     }
                 )
