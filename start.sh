@@ -11,14 +11,14 @@ pkill -9 -f "python.*main" 2>/dev/null
 pkill -9 -f "uvicorn" 2>/dev/null
 sleep 2
 
-PROJECT_DIR="/Users/kmr/Documents/GitHub/AI_Calendar"
+PROJECT_DIR="/Users/annaepple/AI_Calendar-1/AI_Calendar"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
 
 # Start Backend
 echo "📦 Starting Backend on port 8000..."
 cd "$BACKEND_DIR"
-$BACKEND_DIR/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 &
+/Users/annaepple/AI_Calendar-1/AI_Calendar/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 &
 BACKEND_PID=$!
 echo "✅ Backend started (PID: $BACKEND_PID)"
 sleep 3

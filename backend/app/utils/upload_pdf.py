@@ -25,8 +25,8 @@ def select_and_save_pdf():
         if result.returncode == 0:
             file_path = result.stdout.strip()
             if file_path:
-                # Save to uploads folder
-                uploads_dir = Path("backend/uploads")
+                # Save to uploads folder (relative to backend directory)
+                uploads_dir = Path(__file__).parent.parent.parent / "uploads"
                 uploads_dir.mkdir(exist_ok=True)
                 
                 # Copy file
