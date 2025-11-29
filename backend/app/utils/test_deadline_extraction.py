@@ -1,17 +1,13 @@
 """
-Standalone script to test deadline extraction from PDF files
-Uses snippet-based approach for reliability across different syllabi.
-
-New mental model:
-- hard_deadline tasks for anything due / graded.
-- class_session events per class date, each with a list of readings.
+Standalone script to test deadline & class-session extraction from PDF files
+Uses a snippet-based approach for reliability across different syllabi.
 """
 import sys
 import os
 from pathlib import Path
 import json
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 # Add backend directory to path for imports
 backend_dir = Path(__file__).parent.parent.parent
@@ -43,6 +39,7 @@ HARD_DEADLINE_TRIGGERS = [
     "paper",
     "project",
     "assignment",
+    "deadline",
 ]
 
 READING_TRIGGERS = [
@@ -55,6 +52,8 @@ READING_TRIGGERS = [
     "required reading",
     "recommended reading",
     "read before class",
+    "preparatory",
+    "mandatory",
 ]
 
 # Date regex:
@@ -95,6 +94,27 @@ def get_date_snippets(text: str, before: int = 1, after: int = 3) -> List[str]:
     return snippets
 
 
+def split_snippet_by_dates(snippet: str) -> List[str]:
+    """
+    Within a large snippet containing many dates (like a detailed schedule grid),
+    split it into smaller chunks, each starting at one date and ending before
+    the next date. This is used for Bocconi-style 'DETAILED SCHEDULE' blocks.
+    """
+    matches = list(DATE_REGEX.finditer(snippet))
+    if not matches:
+        return [snippet]
+
+    chunks: List[str] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(snippet)
+        chunk = snippet[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+    return chunks
+
+
 def extract_date_strings(snippet: str) -> List[str]:
     """
     Extract valid date-like strings (day + month) from a snippet
@@ -118,7 +138,8 @@ def extract_date_strings(snippet: str) -> List[str]:
                 date_strings.append(full_match)
             continue
 
-        # 2) Month-name formats: e.g. "Sept 11", "September 29"
+        # 2) Month-name formats must include a numeric day on the same token
+        #    e.g. "Sept 11", "September 29"
         m_mon = re.match(
             r"(?i)^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}$",
             full_match,
@@ -139,7 +160,10 @@ def extract_date_strings(snippet: str) -> List[str]:
     return list(set(date_strings))
 
 
-def analyze_snippet(snippet: str, assessment_context: Optional[str] = None) -> Optional[List[Dict]]:
+def analyze_snippet(
+    snippet: str,
+    assessment_context: Optional[str] = None,
+) -> Optional[List[Dict]]:
     """
     Call the LLM on a snippet (may contain multiple dates + context)
     and get an array of date-level items.
@@ -176,90 +200,71 @@ NOT as preparatory reading.
 You are processing a short excerpt from a university syllabus. The text is
 shown below. It contains one or more explicit date strings.
 
-Your job is to identify ONLY the concrete student tasks and class sessions
-in this snippet, GROUPED BY DATE STRING.
+Your job is to identify ONLY the concrete student tasks/deadlines in this snippet,
+GROUPED BY DATE STRING.
 
 The allowed date strings for this snippet are:
 {date_hint}{assessment_info}
 
-For each date, you may output:
-- zero or one "class_session" object (with readings attached), and/or
-- one or more "hard_deadline" objects (for things that are due, exams, etc.),
-or nothing if that date is irrelevant ("ignore").
-
 ### IMPORTANT RULES
 
-1. Class sessions
-   - A "class_session" represents a class meeting on that date.
-   - Use it when the text clearly describes a session (e.g., a topic list,
-     guest speaker, or schedule entry).
-   - Attach all readings for that class under "prep_tasks" and
-     "mandatory_tasks" arrays. Do NOT create separate top-level objects
-     just for individual readings.
-   - There should usually be at most ONE "class_session" object per date.
-     If the snippet has multiple mentions, merge them into one object.
-
-2. What counts as a HARD DEADLINE
-   - Use "hard_deadline" when something is due or must be submitted, or is a
-     clearly graded assessment on that date. Typical trigger words:
-       "due", "submit", "submission", "hand in", "exam", "test",
-       "assessment", "quiz", "final", "midterm", "paper", "project",
-       "assignment".
+1. What counts as a HARD DEADLINE
+   - Only create "hard_deadline" items if the text near that date contains
+     verbs such as: "due", "submit", "submission", "hand in", "exam",
+     "test", "assessment", "quiz", "final", "midterm", "paper", "project",
+     "assignment", "deadline".
    - If the date is only used for a class meeting, a review session, or
      "Course and Grading Structure" WITHOUT any of those verbs, do NOT
-     invent a deadline. Either use "class_session" or "ignore".
+     invent a deadline. Either treat it as "class_session" or "ignore".
    - If there are MULTIPLE assignments/assessments/projects mentioned for
      the same date, create a separate hard_deadline entry for EACH distinct
      deliverable (e.g., “Second Research Project Review (Final)” and
      “Third Research Project: Interim Report” should be two items).
 
-3. What counts as READING TASKS (inside class_session)
-   - Only create reading tasks (inside a class_session) if they are under
-     headings like:
-       "Readings", "Readings for Discussion", "Read before class",
-       "Required Reading", "Recommended Reading".
+2. What counts as READING TASKS
+   - Only create reading tasks for items under headings like:
+     "Readings", "Readings for Discussion", "Read before class",
+     "Required Reading", "Recommended Reading", "Preparatory", "Mandatory".
    - Also include recommended readings explicitly marked as such (e.g.,
      "not required but recommended") and you may label them with type
      "reading_optional".
-   - Do NOT treat lecture "Topics" as readings. Do NOT create readings from
-     bullets under "Topics", "Timing", etc., unless the text explicitly says
+   - Do NOT create reading tasks from bullets under "Topics", "Timing",
+     or other lecture content sections unless the text explicitly says
      "Read", "Reading", "Chapter", "Ch.", "Chap." or clearly names a
-     book/article or chapter/section as required/recommended reading.
+     book/article or chapter/section.
 
-4. In-Class Assessments
+3. In-Class Assessments
    - If the snippet mentions "In-Class Assessment" or "in-class skills
-     assessment", you SHOULD create at least one graded "hard_deadline"
-     of type "assessment" on that date for each such occurrence, even if
-     you also represent the session as "class_session".
+     assessment", you MUST create at least one graded "hard_deadline"
+     of type "assessment" on that date for each such occurrence,
+     even if you also represent the session as "class_session".
      For example, title could be:
        "In-Class Assessment: Valuation of Property Types (1)".
 
-5. Avoid generic umbrella deadlines
+4. Avoid generic umbrella deadlines
    - Do NOT create vague tasks like "Submit primary research assignments"
      unless the snippet explicitly says that ALL of them are due on that
      exact date. Prefer the specific names used by the syllabus
      ("Special Assignment #1", "First Research Project", etc.).
 
-6. Multi-date phrases
+5. Multi-date phrases
    - When a sentence mentions multiple dates (e.g., a class on one date
      and something "due" on a different date), assign the deadline to the
      date that appears in the same "due/submit" phrase (e.g., "due Oct. 3"
      must be assigned to "Oct. 3", NOT to the earlier class date).
 
-7. Do NOT hallucinate
+6. Do NOT hallucinate
    - Use ONLY the date strings above; do not invent new dates.
    - Do not create tasks that cannot be clearly justified from the text.
 
 ### OUTPUT FORMAT
 
-Return a JSON ARRAY. Each element corresponds to ONE interpretation
-for a single date string and has:
+Return a JSON ARRAY. Each element corresponds to ONE date string and has:
 
 {{
   "kind": "class_session" | "hard_deadline" | "ignore",
   "date_string": "<one of: {date_hint}>",
-
-  "session_title": "optional, for class_session (e.g. session topic line)",
+  "session_title": "optional, for class_session",
 
   "prep_tasks": [
     {{"title": "...", "type": "reading_preparatory" | "reading_optional" | "reading_mandatory"}}
@@ -279,12 +284,6 @@ for a single date string and has:
   ]
 }}
 
-Notes:
-- For "hard_deadline" objects, you usually leave "session_title",
-  "prep_tasks", and "mandatory_tasks" empty.
-- For "class_session" objects, you usually leave "hard_deadlines" empty
-  and only use the reading arrays.
-
 If nothing useful for a given date, you may omit that date entirely or set
 "kind": "ignore" and empty lists.
 
@@ -293,6 +292,7 @@ Syllabus snippet:
 
     try:
         response = client.chat.completions.create(
+            # Use a stronger model for extraction reliability
             model="gpt-4o",
             messages=[
                 {
@@ -327,67 +327,49 @@ Syllabus snippet:
         return None
 
 
-def extract_inclass_assessment_tasks(text: str) -> List[Dict]:
+def extract_inline_deadlines_from_text(text: str) -> List[Dict]:
     """
-    Deterministically extract in-class assessments from the raw syllabus text.
-    We track the most recent date seen and assign that date to any
-    'In-Class Assessment:' line that follows.
+    Very simple helper that looks for explicit 'DEADLINE:' lines and turns them
+    into administrative hard_deadline items. This is mainly for lines like:
+
+      DEADLINE: Sunday, Sept 11, 2022 please send an email ...
     """
-    lines = text.splitlines()
-    current_date: Optional[str] = None
-    tasks: List[Dict] = []
-
-    for line in lines:
-        # Update current_date when we see any date in the line
-        m_date = DATE_REGEX.search(line)
-        if m_date:
-            current_date = m_date.group(0).strip()
-
-        # Look for in-class assessments
-        if "In-Class Assessment" in line or "in-class skills assessment" in line:
-            if not current_date:
-                continue
-
-            # Try to extract title after the colon
-            m_assess = re.search(r"In-Class Assessment:\s*(.+)", line, re.IGNORECASE)
-            if m_assess:
-                title = m_assess.group(1).strip()
-            else:
-                title = "In-Class Assessment"
-
-            tasks.append(
-                {
-                    "date": current_date,
-                    "title": title,
-                    "description": "In-class graded assessment.",
-                    "type": "assessment",
-                }
-            )
-
-    return tasks
-
-
-def deduplicate_tasks(tasks: List[Dict]) -> List[Dict]:
-    """
-    Deduplicate tasks by (type, date, normalized title).
-    Keeps the first occurrence for each key.
-    """
-    seen: Dict[Tuple[str, str, str], Dict] = {}
-    result: List[Dict] = []
-
-    for t in tasks:
-        t_type = t.get("type", "")
-        t_date = t.get("date", "")
-        t_title_norm = t.get("title", "").strip().lower()
-
-        key = (t_type, t_date, t_title_norm)
-        if key in seen:
+    items: List[Dict] = []
+    for line in text.splitlines():
+        lower = line.lower()
+        if "deadline:" not in lower:
             continue
 
-        seen[key] = t
-        result.append(t)
+        # Find any date-like string on the same line
+        m = DATE_REGEX.search(line)
+        if not m:
+            continue
+        date_string = m.group(0).strip()
 
-    return result
+        # Everything after "DEADLINE:" becomes description
+        if "DEADLINE:" in line:
+            after = line.split("DEADLINE:", 1)[1].strip()
+        elif "deadline:" in line:
+            after = line.split("deadline:", 1)[1].strip()
+        else:
+            after = line.strip()
+
+        title = "Administrative deadline"
+        # A bit nicer if it's the Bocconi attendance deadline
+        if "attending" in lower and "non-attending" in lower:
+            title = "Confirm attending / non-attending status"
+
+        items.append(
+            {
+                "kind": "hard_deadline",
+                "date": date_string,
+                "type": "administrative",
+                "title": title,
+                "description": after,
+            }
+        )
+
+    return items
 
 
 def extract_all_tasks_from_syllabus(
@@ -395,19 +377,34 @@ def extract_all_tasks_from_syllabus(
     show_snippets: bool = False,
     assessment_components: Optional[List[Dict]] = None,
 ) -> List[Dict]:
-    """
-    Main pipeline: extract snippets, analyze each, flatten into:
-      - hard_deadline tasks
-      - class_session events with readings
+    """Main pipeline: extract snippets, analyze each, flatten into items.
 
-    Returns a single flat list with both types.
+    Items can be:
+      - hard deadlines (assignments, exams, projects, assessments, admin)
+      - class_sessions (one per class date, with readings bundled)
     """
 
     # 1. Extract coarse big snippets that contain dates
     big_snippets = get_date_snippets(text)
-    snippets: List[str] = big_snippets
 
-    print(f"📍 Found {len(big_snippets)} snippets containing dates\n")
+    # Smart splitting:
+    # - For "DETAILED SCHEDULE" style grids (Bocconi), we split into per-date
+    #   mini-snippets so the model can reliably attach readings to each class.
+    # - For all other snippets (Yale, narrative + deadlines), we keep
+    #   the big snippet intact so multi-date "due X" phrases stay together.
+    snippets: List[str] = []
+    for big in big_snippets:
+        lower = big.lower()
+        is_schedule_grid = "detailed schedule" in lower or "day instructor" in lower
+
+        if is_schedule_grid:
+            mini = split_snippet_by_dates(big)
+            snippets.extend(mini)
+        else:
+            snippets.append(big)
+
+    print(f"📍 Found {len(big_snippets)} snippets containing dates")
+    print(f"📍 After smart splitting: {len(snippets)} snippets to analyze\n")
 
     # Build assessment context string if provided
     assessment_context = None
@@ -433,30 +430,26 @@ def extract_all_tasks_from_syllabus(
         print("\n")
 
     # 3. Analyze each snippet with the LLM, passing assessment context
-    all_items: List[Dict] = []
-    snippet_items_pairs: List[Tuple[str, List[Dict]]] = []
+    snippet_items_pairs: List[tuple[str, List[Dict]]] = []
 
     for i, snippet in enumerate(snippets, 1):
         print(f"Analyzing snippet {i}/{len(snippets)}...", end="\r")
         result = analyze_snippet(snippet, assessment_context)
         if result:
             snippet_items_pairs.append((snippet, result))
-            all_items.extend(result)
 
-    print(f"\n✅ Analyzed {len(snippets)} snippets, gathered {len(all_items)} date-items\n")
+    total_llm_items = sum(len(r) for _, r in snippet_items_pairs)
+    print(f"\n✅ Analyzed {len(snippets)} snippets, gathered {total_llm_items} date-items\n")
 
-    # 4. Flatten into:
-    #    - hard_deadline tasks
-    #    - class_session events (each with readings)
-    tasks: List[Dict] = []
-    class_sessions: Dict[Tuple[str, str], Dict] = {}  # (date, title) -> session
+    # 4. Flatten into individual items (deadlines + class sessions)
+    items: List[Dict] = []
 
-    for snippet_text, items in snippet_items_pairs:
+    for snippet_text, llm_items in snippet_items_pairs:
         lower_snippet = snippet_text.lower()
         has_reading_trigger = any(rt in lower_snippet for rt in READING_TRIGGERS)
         has_hard_trigger = any(ht in lower_snippet for ht in HARD_DEADLINE_TRIGGERS)
 
-        for item in items:
+        for item in llm_items:
             if not isinstance(item, dict):
                 print(f"⚠️  Skipping malformed item of type {type(item)}")
                 continue
@@ -467,86 +460,91 @@ def extract_all_tasks_from_syllabus(
             if not date_string or kind == "ignore":
                 continue
 
-            # --- HARD DEADLINES ---
+            # --- Hard deadlines ---
             if kind == "hard_deadline":
+                # Require a hard-deadline trigger word somewhere in the snippet
                 if not has_hard_trigger:
                     continue
 
                 for t in item.get("hard_deadlines", []):
-                    title = t.get("title", "").strip()
+                    title = (t.get("title") or "").strip()
                     if not title:
                         continue
+                    deadline_type = t.get("type", "deadline")
+                    description = t.get("description", "").strip()
 
-                    task = {
+                    obj: Dict = {
+                        "kind": "hard_deadline",
                         "date": date_string,
+                        "type": deadline_type,
                         "title": title,
-                        "description": t.get("description", ""),
-                        "type": t.get("type", "deadline"),
+                        "description": description,
                     }
                     assessment_name = t.get("assessment_name")
                     if assessment_name:
-                        task["assessment_name"] = assessment_name
-                    tasks.append(task)
+                        obj["assessment_name"] = assessment_name
+                    items.append(obj)
 
-            # --- CLASS SESSIONS ---
+            # --- Class sessions (one item per date, readings bundled) ---
             elif kind == "class_session":
                 session_title = (item.get("session_title") or "").strip()
                 if not session_title:
-                    session_title = "Class Session"
+                    session_title = f"Class session on {date_string}"
 
-                key = (date_string, session_title)
-
-                if key not in class_sessions:
-                    class_sessions[key] = {
-                        "date": date_string,
-                        "title": session_title,
-                        "type": "class_session",
-                        "readings": [],  # list of {title, role, reading_type}
-                    }
-
-                session = class_sessions[key]
+                readings: List[Dict] = []
 
                 if has_reading_trigger:
-                    # Prep tasks
+                    # Preparatory readings
                     for t in item.get("prep_tasks", []):
-                        title = t.get("title", "").strip()
-                        if not title:
+                        r_title = (t.get("title") or "").strip()
+                        if not r_title:
                             continue
-                        session["readings"].append(
+                        readings.append(
                             {
-                                "title": title,
-                                "role": "prep",
+                                "title": r_title,
+                                "kind": "prep",
                                 "reading_type": t.get("type", "reading_preparatory"),
                             }
                         )
 
-                    # Mandatory / optional tasks
+                    # Mandatory/optional readings
                     for t in item.get("mandatory_tasks", []):
-                        title = t.get("title", "").strip()
-                        if not title:
+                        r_title = (t.get("title") or "").strip()
+                        if not r_title:
                             continue
-                        session["readings"].append(
+                        readings.append(
                             {
-                                "title": title,
-                                "role": "mandatory",
+                                "title": r_title,
+                                "kind": "mandatory",
                                 "reading_type": t.get("type", "reading_mandatory"),
                             }
                         )
-                # If no reading trigger: keep the class_session with empty readings
 
-    # 5. Add deterministic in-class assessments as hard_deadline tasks
-    inclass_tasks = extract_inclass_assessment_tasks(text)
-    tasks.extend(inclass_tasks)
+                items.append(
+                    {
+                        "kind": "class_session",
+                        "date": date_string,
+                        "type": "class_session",
+                        "title": session_title,
+                        "readings": readings,
+                    }
+                )
 
-    # 6. Deduplicate hard_deadline-like tasks
-    tasks = deduplicate_tasks(tasks)
+    # 5. Add inline 'DEADLINE:'-style admin deadlines from raw text
+    inline_deadlines = extract_inline_deadlines_from_text(text)
+    items.extend(inline_deadlines)
 
-    # 7. Merge class_sessions into final list
-    all_items_flat: List[Dict] = []
-    all_items_flat.extend(tasks)
-    all_items_flat.extend(class_sessions.values())
+    # 6. Simple de-duplication by (date, type, title)
+    unique_items: List[Dict] = []
+    seen_keys = set()
+    for it in items:
+        key = (it.get("date"), it.get("type"), it.get("title"))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique_items.append(it)
 
-    return all_items_flat
+    return unique_items
 
 
 # Main execution
@@ -655,19 +653,29 @@ if __name__ == "__main__":
                 print(f"  📅 Date:        {item.get('date', 'N/A')}")
                 print(f"  🏷️  Type:        {item.get('type', 'N/A')}")
                 print(f"  📌 Title:       {item.get('title', 'N/A')}")
+                desc = item.get("description")
+                if desc:
+                    print(f"  📝 Description: {desc}")
+                if "assessment_name" in item:
+                    print(f"  🎯 Assessment:  {item['assessment_name']}")
+
+                # Print readings for class sessions
                 if item.get("type") == "class_session":
-                    readings = item.get("readings", [])
+                    readings = item.get("readings") or []
                     if readings:
                         print("  📚 Readings:")
                         for r in readings:
-                            print(
-                                f"    - [{r.get('role')}] {r.get('title')} "
-                                f"({r.get('reading_type')})"
-                            )
-                else:
-                    print(f"  📝 Description: {item.get('description', 'N/A')}")
-                    if "assessment_name" in item:
-                        print(f"  🎯 Assessment:  {item['assessment_name']}")
+                            kind = r.get("kind", "prep")
+                            if kind == "mandatory":
+                                label = "mandatory"
+                            elif kind == "optional":
+                                label = "optional"
+                            else:
+                                label = "prep"
+                            r_title = r.get("title", "Untitled reading")
+                            r_type = r.get("reading_type", "reading")
+                            print(f"    - [{label}] {r_title} ({r_type})")
+
                 print()
 
         print("=" * 80)
@@ -691,7 +699,7 @@ if __name__ == "__main__":
                 print(f"✅ Saved to: {output_file}")
 
     except Exception as e:
-        print(f"❌ Error extracting items: {e}")
+        print(f"❌ Error extracting tasks: {e}")
         import traceback
 
         traceback.print_exc()
