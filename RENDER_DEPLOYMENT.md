@@ -192,6 +192,9 @@ CORS_ORIGINS = ["https://your-frontend-url.com", "https://your-frontend-url.verc
 
 ## 🐛 Troubleshooting
 
+### ✅ Build Successful but Start Failed (Status 127):
+**Fixed!** The `start_render.sh` script now properly changes to the backend directory before starting the server.
+
 ### Build Failed - Requirements Not Found:
 ✅ **Fixed!** `requirements.txt` is now in root directory.
 
