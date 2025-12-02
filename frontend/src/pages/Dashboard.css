@@ -26,8 +26,8 @@
   letter-spacing: -1.5px;
   font-family: 'Arial Black', 'Arial Bold', sans-serif;
   text-transform: uppercase;
-  color: #FFA366;
-  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+  color: #E17541;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .dashboard-header h1 {
