@@ -5,8 +5,8 @@ services:
     runtime: python
     region: oregon
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start_render.sh
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -17,7 +17,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: "https://ai-calendar-frontend.onrender.com,http://localhost:5173"
+        value: https://ai-calendar-frontend.onrender.com,http://localhost:5173
     healthCheckPath: /health
     
   # Frontend Static Site (Optional - or use Vercel/Netlify)
