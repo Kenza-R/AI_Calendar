@@ -50,6 +50,7 @@ export const tasksAPI = {
   delete: (id) => api.delete(`/tasks/${id}`),
   schedulePrepSessions: (id) => api.post(`/tasks/${id}/schedule`),
   regeneratePrep: (id) => api.post(`/tasks/${id}/regenerate-prep`),
+  syncEvents: () => api.post('/tasks/sync-events'),
 };
 
 // Documents API

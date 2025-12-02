@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { tasksAPI } from '../services/api';
 import CalendarView from '../components/CalendarView';
 import TasksList from '../components/TasksList';
 import UploadDocument from '../components/UploadDocument';
@@ -16,8 +17,20 @@ const Dashboard = () => {
   useEffect(() => {
     if (!user) {
       navigate('/login');
+    } else {
+      // Sync task events on mount to ensure all tasks have calendar events
+      syncTaskEvents();
     }
   }, [user, navigate]);
+
+  const syncTaskEvents = async () => {
+    try {
+      await tasksAPI.syncEvents();
+    } catch (error) {
+      console.error('Error syncing task events:', error);
+      // Silent fail - don't interrupt user experience
+    }
+  };
 
   const handleLogout = () => {
     logout();

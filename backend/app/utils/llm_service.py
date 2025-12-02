@@ -19,22 +19,43 @@ def extract_deadlines_from_text(text: str, context: str = "syllabus") -> List[Di
         return _generate_sample_deadlines(text)
     
     try:
+        # Get current academic year context
+        current_date = datetime.now()
+        current_year = current_date.year
+        current_month = current_date.month
+        
+        # Determine likely academic year (Fall semester starts in Aug, Spring in Jan)
+        if current_month >= 8:  # Aug-Dec
+            academic_year = current_year
+            next_year = current_year + 1
+        else:  # Jan-Jul
+            academic_year = current_year - 1
+            next_year = current_year
+        
         prompt = f"""You are an expert at extracting deadline and assignment information from academic syllabi and documents.
 
 Analyze the following {context} text and extract EVERY single deadline, assignment, exam, quiz, presentation, paper, project, and important date mentioned.
 
-CRITICAL: First identify the YEAR and SEMESTER from the syllabus:
-- Look for "Spring 2024", "Fall 2023", "2023-2024", etc.
-- Look at the course start/end dates to determine the year
-- If semester is Spring (Jan-May), use that year
-- If semester is Fall (Aug-Dec), check if dates are in second half of year
-- When you see dates like "January 15" or "March 10" WITHOUT a year, use the identified year from the syllabus
+CRITICAL DATE EXTRACTION RULES:
+Current date context: We are in academic year {academic_year}-{next_year} (it is December {current_year})
+
+1. ALL dates in American format MM/DD/YYYY should be converted EXACTLY as written
+2. For dates WITHOUT year (like "9/15" or "September 15"):
+   - If month is Aug-Dec (8-12): Use year {academic_year}
+   - If month is Jan-Jul (1-7): Use year {next_year}
+3. DO NOT use 2026 or future years unless explicitly written in the syllabus
+4. Examples for current academic year {academic_year}-{next_year}:
+   - "Due 9/15" or "September 15" → {academic_year}-09-15
+   - "Due 12/10" or "December 10" → {academic_year}-12-10
+   - "Due 1/20" or "January 20" → {next_year}-01-20
+   - "Due 3/15" or "March 15" → {next_year}-03-15
+   - "Due 11/11/2024" → 2024-11-11 (use the year given)
 
 For EACH deadline/assignment found, return valid JSON in exactly this format:
 [
   {{
     "title": "Exact assignment/exam name from syllabus",
-    "date": "YYYY-MM-DD format using the correct year from syllabus context",
+    "date": "YYYY-MM-DD format - follow the rules above EXACTLY",
     "type": "assignment|exam|quiz|presentation|paper|deadline|reading|project|interview",
     "description": "What student needs to do",
     "estimated_hours": number between 1 and 20
@@ -43,12 +64,11 @@ For EACH deadline/assignment found, return valid JSON in exactly this format:
 
 CRITICAL REQUIREMENTS:
 1. Extract EVERY deadline mentioned - do not skip any
-2. Convert all dates to YYYY-MM-DD format using the CORRECT YEAR from the syllabus
-3. If you see "Due January 20" in a "Fall 2024" syllabus, the date is 2025-01-20 (Spring semester)
-4. If you see "Due September 10" in a "Fall 2024" syllabus, the date is 2024-09-10
-5. Include the full descriptive title from the syllabus
-6. Return ONLY valid JSON array, nothing else
-7. Be exhaustive - extract more items rather than fewer
+2. American date format MM/DD/YYYY or MM/DD should be converted per rules above
+3. DO NOT use 2026 unless explicitly written in the syllabus
+4. Include the full descriptive title from the syllabus
+5. Return ONLY valid JSON array, nothing else
+6. Be exhaustive - extract more items rather than fewer
 
 Syllabus text:
 {text[:6000]}"""

@@ -118,7 +118,7 @@ async def update_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update a task."""
+    """Update a task and its linked calendar event."""
     task = db.query(Task).filter(
         Task.id == task_id,
         Task.user_id == current_user.id
@@ -136,6 +136,42 @@ async def update_task(
         setattr(task, field, value)
     
     task.updated_at = datetime.utcnow()
+    
+    # If task has a linked event and deadline was updated, update the event too
+    if task.event_id and 'deadline' in update_data and update_data['deadline']:
+        event = db.query(Event).filter(Event.id == task.event_id).first()
+        if event:
+            new_deadline = update_data['deadline']
+            # Update event times to match new deadline
+            event.start_time = new_deadline.replace(hour=23, minute=59, second=0, microsecond=0)
+            event.end_time = event.start_time + timedelta(hours=1)
+            event.updated_at = datetime.utcnow()
+            
+            # Update event title and description if task title/description changed
+            if 'title' in update_data:
+                event.title = f"📅 {update_data['title']}"
+            if 'description' in update_data:
+                event.description = update_data['description']
+    
+    # If task doesn't have an event but now has a deadline, create one
+    elif not task.event_id and task.deadline:
+        deadline_dt = task.deadline
+        event_start = deadline_dt.replace(hour=23, minute=59, second=0, microsecond=0)
+        event_end = event_start + timedelta(hours=1)
+        
+        new_event = Event(
+            user_id=current_user.id,
+            title=f"📅 {task.title}",
+            description=task.description or "",
+            start_time=event_start,
+            end_time=event_end,
+            event_type="deadline",
+            source="manual"
+        )
+        db.add(new_event)
+        db.flush()
+        task.event_id = new_event.id
+    
     db.commit()
     db.refresh(task)
     
@@ -191,6 +227,48 @@ async def schedule_prep_sessions(
         "task_id": task_id,
         "suggested_sessions": sessions,
         "message": f"Found {len(sessions)} available time slots for prep sessions"
+    }
+
+
+@router.post("/sync-events", response_model=dict)
+async def sync_all_task_events(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create calendar events for all tasks that don't have them yet."""
+    # Get all tasks without events that have deadlines
+    tasks_without_events = db.query(Task).filter(
+        Task.user_id == current_user.id,
+        Task.event_id == None,
+        Task.deadline != None
+    ).all()
+    
+    created_count = 0
+    for task in tasks_without_events:
+        deadline_dt = task.deadline
+        event_start = deadline_dt.replace(hour=23, minute=59, second=0, microsecond=0)
+        event_end = event_start + timedelta(hours=1)
+        
+        new_event = Event(
+            user_id=current_user.id,
+            title=f"📅 {task.title}",
+            description=task.description or "",
+            start_time=event_start,
+            end_time=event_end,
+            event_type="deadline",
+            source=task.source_type or "manual"
+        )
+        db.add(new_event)
+        db.flush()
+        
+        task.event_id = new_event.id
+        created_count += 1
+    
+    db.commit()
+    
+    return {
+        "message": f"Created {created_count} calendar events for tasks",
+        "tasks_synced": created_count
     }
 
 
