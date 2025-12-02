@@ -61,6 +61,22 @@ export const documentsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // Enhanced upload with advanced AI extraction
+  uploadSyllabusEnhanced: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/documents/upload-syllabus-enhanced', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  // Extract assessment components only
+  extractAssessments: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/documents/extract-assessments', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   parseText: (text, context = 'general') => 
     api.post('/documents/parse-text', null, { params: { text, context } }),
 };

@@ -37,7 +37,8 @@ const UploadDocument = () => {
     setError('');
 
     try {
-      const response = await documentsAPI.uploadSyllabus(file);
+      // Use enhanced upload endpoint for better extraction
+      const response = await documentsAPI.uploadSyllabusEnhanced(file);
       setResult(response.data);
       setFile(null);
       // Reset file input
@@ -98,7 +99,41 @@ const UploadDocument = () => {
                 <div className="stat-number">{result.tasks_created}</div>
                 <div className="stat-label">Tasks Created</div>
               </div>
+              {result.assessment_count > 0 && (
+                <div className="stat-card">
+                  <div className="stat-number">{result.assessment_count}</div>
+                  <div className="stat-label">Assessments Found</div>
+                </div>
+              )}
+              {result.class_sessions > 0 && (
+                <div className="stat-card">
+                  <div className="stat-number">{result.class_sessions}</div>
+                  <div className="stat-label">Class Sessions</div>
+                </div>
+              )}
             </div>
+
+            {result.assessment_components && result.assessment_components.length > 0 && (
+              <div className="extracted-tasks">
+                <h3>Assessment Components:</h3>
+                <div className="tasks-list-simple">
+                  {result.assessment_components.map((comp, idx) => (
+                    <div key={idx} className="task-item">
+                      <div className="task-item-header">
+                        <strong>{comp.name}</strong>
+                        <span className="task-type-badge">{comp.type}</span>
+                      </div>
+                      <div className="task-deadline">
+                        ⚖️ Weight: {comp.weight_percent}% | Applies to: {comp.applies_to}
+                      </div>
+                      {comp.description && (
+                        <div className="task-description">{comp.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {result.tasks && result.tasks.length > 0 && (
               <div className="extracted-tasks">
@@ -113,6 +148,9 @@ const UploadDocument = () => {
                       <div className="task-deadline">
                         📅 {new Date(task.deadline).toLocaleDateString()}
                       </div>
+                      {task.description && (
+                        <div className="task-description">{task.description}</div>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -2,12 +2,18 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
+from pathlib import Path
 from app.database import get_db
 from app.models.user import User
 from app.models.task import Task
 from app.utils.auth import get_current_user
 from app.utils.pdf_parser import parse_pdf, parse_text_document
 from app.utils.llm_service import extract_deadlines_from_text
+
+# Import enhanced copy utilities
+from app.utils.upload_pdf_copy import save_uploaded_file, get_latest_pdf
+from app.utils.test_assessment_parser_copy import extract_assessment_components_api
+from app.utils.test_deadline_extraction_copy import extract_deadlines_and_sessions_api
 import json
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -145,4 +151,185 @@ async def parse_text_for_deadlines(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error parsing text: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENHANCED ENDPOINTS (using copy files)
+# ============================================================================
+
+@router.post("/upload-syllabus-enhanced", response_model=dict)
+async def upload_syllabus_enhanced(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Enhanced syllabus upload with advanced deadline and assessment extraction.
+    Uses improved AI parsing with assessment context and class session detection.
+    """
+    # Validate file type
+    allowed_extensions = [".pdf", ".txt", ".docx"]
+    file_extension = "." + file.filename.split(".")[-1].lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
+        )
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Save the uploaded file
+        uploads_dir = Path(__file__).parent.parent.parent / "uploads"
+        save_result = save_uploaded_file(file_content, file.filename, uploads_dir)
+        
+        if save_result["status"] != "success":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=save_result["message"]
+            )
+        
+        # Parse document based on type
+        if file_extension == ".pdf":
+            text_content = parse_pdf(file_content)
+        else:
+            text_content = parse_text_document(file_content, file_extension)
+        
+        # Step 1: Extract assessment components
+        assessment_result = extract_assessment_components_api(text_content)
+        assessment_components = assessment_result.get("components", []) if assessment_result.get("success") else []
+        
+        # Step 2: Extract deadlines and class sessions with assessment context
+        extraction_result = extract_deadlines_and_sessions_api(text_content, assessment_components)
+        
+        if not extraction_result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=extraction_result.get("error", "Failed to extract deadlines")
+            )
+        
+        # Step 3: Create tasks from hard deadlines
+        created_tasks = []
+        items = extraction_result.get("items", [])
+        
+        for item in items:
+            if item.get("kind") != "hard_deadline":
+                continue
+            
+            # Parse date string to datetime
+            try:
+                date_string = item.get("date", "")
+                # Try to parse the date (handles formats like "Sept 11", "9/15", etc.)
+                from dateutil import parser as date_parser
+                deadline_date = date_parser.parse(date_string, fuzzy=True)
+                
+                # If year is missing, assume current year or next year if date has passed
+                if deadline_date.year == datetime.now().year:
+                    if deadline_date < datetime.now():
+                        deadline_date = deadline_date.replace(year=datetime.now().year + 1)
+                        
+            except Exception as e:
+                # Skip if date parsing fails
+                continue
+            
+            # Create task
+            task_type = item.get("type", "assignment")
+            new_task = Task(
+                user_id=current_user.id,
+                title=item.get("title", "Untitled Task"),
+                description=item.get("description", ""),
+                deadline=deadline_date,
+                priority="high" if task_type in ["exam", "assessment"] else "medium",
+                task_type=task_type,
+                estimated_hours=8 if task_type in ["exam", "project"] else 5,
+                source_type="syllabus_enhanced",
+                source_file=file.filename
+            )
+            
+            db.add(new_task)
+            created_tasks.append({
+                "title": new_task.title,
+                "deadline": new_task.deadline.isoformat(),
+                "type": new_task.task_type,
+                "description": new_task.description
+            })
+        
+        db.commit()
+        
+        # Prepare response
+        return {
+            "message": f"Successfully processed {file.filename} with enhanced extraction",
+            "file_saved": save_result["filename"],
+            "assessment_components": assessment_components,
+            "assessment_count": len(assessment_components),
+            "total_items_extracted": len(items),
+            "tasks_created": len(created_tasks),
+            "hard_deadlines": len(extraction_result.get("hard_deadlines", [])),
+            "class_sessions": len(extraction_result.get("class_sessions", [])),
+            "tasks": created_tasks,
+            "all_items": items,
+            "extracted_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing document: {str(e)}"
+        )
+
+
+@router.post("/extract-assessments", response_model=dict)
+async def extract_assessments(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Extract grading/assessment components from a syllabus.
+    Returns structured information about exams, projects, assignments, etc.
+    """
+    allowed_extensions = [".pdf", ".txt", ".docx"]
+    file_extension = "." + file.filename.split(".")[-1].lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
+        )
+    
+    try:
+        file_content = await file.read()
+        
+        # Parse document
+        if file_extension == ".pdf":
+            text_content = parse_pdf(file_content)
+        else:
+            text_content = parse_text_document(file_content, file_extension)
+        
+        # Extract assessment components
+        result = extract_assessment_components_api(text_content)
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to extract assessments")
+            )
+        
+        return {
+            "message": f"Successfully extracted assessment components from {file.filename}",
+            "components": result.get("components", []),
+            "count": result.get("count", 0),
+            "total_weight": result.get("total_weight", 0)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error extracting assessments: {str(e)}"
         )

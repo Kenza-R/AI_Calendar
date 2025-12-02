@@ -179,6 +179,13 @@
   font-size: 14px;
 }
 
+.task-description {
+  color: #777;
+  font-size: 13px;
+  margin-top: 6px;
+  font-style: italic;
+}
+
 .text-preview {
   margin-top: 20px;
   background: #f8f9fa;
