@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.user import User
 from app.models.task import Task
+from app.models.event import Event
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.utils.auth import get_current_user
 from app.utils.llm_service import generate_prep_material
@@ -22,9 +23,29 @@ async def create_task(
     db: Session = Depends(get_db)
 ):
     """Create a new task."""
+    # If no event_id provided and task has a deadline, create a calendar event
+    event_id = task_data.event_id
+    if not event_id and task_data.deadline:
+        # Create calendar event for the task deadline
+        event_start = task_data.deadline.replace(hour=23, minute=59, second=0, microsecond=0)
+        event_end = event_start + timedelta(hours=1)
+        
+        new_event = Event(
+            user_id=current_user.id,
+            title=f"📅 {task_data.title}",
+            description=task_data.description or "",
+            start_time=event_start,
+            end_time=event_end,
+            event_type="deadline",
+            source="manual"
+        )
+        db.add(new_event)
+        db.flush()  # Get the event ID
+        event_id = new_event.id
+    
     new_task = Task(
         user_id=current_user.id,
-        event_id=task_data.event_id,
+        event_id=event_id,
         title=task_data.title,
         description=task_data.description,
         deadline=task_data.deadline,

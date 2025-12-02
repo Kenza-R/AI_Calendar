@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from app.database import get_db
 from app.models.user import User
 from app.models.task import Task
 from app.models.document import Document
+from app.models.event import Event
 from app.utils.auth import get_current_user
 from app.utils.pdf_parser import parse_pdf, parse_text_document
 from app.utils.llm_service import extract_deadlines_from_text
@@ -55,6 +56,7 @@ async def upload_syllabus(
         
         # Create tasks from extracted deadlines
         created_tasks = []
+        created_events = []
         for deadline_info in deadlines:
             # Parse date string to datetime
             try:
@@ -63,9 +65,27 @@ async def upload_syllabus(
                 # If date parsing fails, skip this item
                 continue
             
+            # Create calendar event for the deadline
+            # Set event to be at the deadline time (default to end of day)
+            event_start = deadline_date.replace(hour=23, minute=59, second=0, microsecond=0)
+            event_end = event_start + timedelta(hours=1)
+            
+            new_event = Event(
+                user_id=current_user.id,
+                title=f"📅 {deadline_info.get('title', 'Untitled Task')}",
+                description=deadline_info.get("description", ""),
+                start_time=event_start,
+                end_time=event_end,
+                event_type="deadline",
+                source="syllabus"
+            )
+            db.add(new_event)
+            db.flush()  # Get the event ID
+            
             # Create task
             new_task = Task(
                 user_id=current_user.id,
+                event_id=new_event.id,
                 title=deadline_info.get("title", "Untitled Task"),
                 description=deadline_info.get("description", ""),
                 deadline=deadline_date,
@@ -81,6 +101,10 @@ async def upload_syllabus(
                 "title": new_task.title,
                 "deadline": new_task.deadline.isoformat(),
                 "type": new_task.task_type
+            })
+            created_events.append({
+                "title": new_event.title,
+                "start_time": new_event.start_time.isoformat()
             })
         
         # Save document record to database
@@ -100,7 +124,9 @@ async def upload_syllabus(
             "message": f"Successfully processed {file.filename}",
             "document_id": document.id,
             "tasks_created": len(created_tasks),
+            "events_created": len(created_events),
             "tasks": created_tasks,
+            "events": created_events,
             "extracted_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
         }
     
