@@ -6,6 +6,7 @@ from pathlib import Path
 from app.database import get_db
 from app.models.user import User
 from app.models.task import Task
+from app.models.document import Document
 from app.utils.auth import get_current_user
 from app.utils.pdf_parser import parse_pdf, parse_text_document
 from app.utils.llm_service import extract_deadlines_from_text
@@ -82,10 +83,22 @@ async def upload_syllabus(
                 "type": new_task.task_type
             })
         
+        # Save document record to database
+        document = Document(
+            user_id=current_user.id,
+            filename=file.filename,
+            file_type=file_extension.replace(".", ""),
+            content_text=text_content,
+            document_type="syllabus",
+            tasks_created=len(created_tasks)
+        )
+        db.add(document)
+        
         db.commit()
         
         return {
             "message": f"Successfully processed {file.filename}",
+            "document_id": document.id,
             "tasks_created": len(created_tasks),
             "tasks": created_tasks,
             "extracted_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
@@ -96,6 +109,57 @@ async def upload_syllabus(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing document: {str(e)}"
         )
+
+
+@router.get("/", response_model=List[dict])
+async def get_documents(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all documents uploaded by the current user."""
+    documents = db.query(Document).filter(Document.user_id == current_user.id).order_by(Document.upload_date.desc()).all()
+    
+    return [{
+        "id": doc.id,
+        "filename": doc.filename,
+        "file_type": doc.file_type,
+        "upload_date": doc.upload_date.isoformat(),
+        "document_type": doc.document_type,
+        "tasks_created": doc.tasks_created,
+        "course_name": doc.course_name,
+        "semester": doc.semester
+    } for doc in documents]
+
+
+@router.get("/{document_id}", response_model=dict)
+async def get_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific document by ID."""
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id
+    ).first()
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "file_type": document.file_type,
+        "upload_date": document.upload_date.isoformat(),
+        "document_type": document.document_type,
+        "tasks_created": document.tasks_created,
+        "course_name": document.course_name,
+        "semester": document.semester,
+        "content_text": document.content_text
+    }
 
 
 @router.post("/parse-text", response_model=dict)

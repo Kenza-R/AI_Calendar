@@ -18,3 +18,4 @@ class User(Base):
     events = relationship("Event", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     calendar_integrations = relationship("CalendarIntegration", back_populates="user", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
