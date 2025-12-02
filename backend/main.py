@@ -9,6 +9,7 @@ from app.routers import (
     calendar_sync_router,
     documents_router
 )
+import re
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -20,10 +21,31 @@ app = FastAPI(
     description="AI-powered productivity calendar that helps manage tasks, deadlines, and prep sessions"
 )
 
-# Configure CORS
+# Custom CORS middleware to handle Vercel preview URLs
+def cors_allow_all_vercel(origin: str) -> bool:
+    """Allow all Vercel domains and localhost"""
+    allowed_patterns = [
+        r"^https://.*\.vercel\.app$",  # All Vercel domains
+        r"^http://localhost:\d+$",      # Localhost with any port
+        r"^http://127\.0\.0\.1:\d+$",  # 127.0.0.1 with any port
+    ]
+    
+    # Also check against configured origins
+    configured_origins = get_cors_origins()
+    if origin in configured_origins:
+        return True
+    
+    # Check against patterns
+    for pattern in allowed_patterns:
+        if re.match(pattern, origin):
+            return True
+    
+    return False
+
+# Configure CORS with custom origin validation
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_cors_origins(),
+    allow_origin_regex=r"^https://.*\.vercel\.app$|^http://localhost:\d+$|^http://127\.0\.0\.1:\d+$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
