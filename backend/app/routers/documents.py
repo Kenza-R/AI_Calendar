@@ -288,54 +288,49 @@ async def upload_syllabus_enhanced(
         else:
             text_content = parse_text_document(file_content, file_extension)
         
-        # Step 1: Extract assessment components
-        assessment_result = extract_assessment_components_api(text_content)
-        assessment_components = assessment_result.get("components", []) if assessment_result.get("success") else []
+        # Extract ALL deadlines using improved LLM service
+        deadlines = extract_deadlines_from_text(text_content, context="syllabus")
         
-        # Step 2: Extract deadlines and class sessions with assessment context
-        extraction_result = extract_deadlines_and_sessions_api(text_content, assessment_components)
-        
-        if not extraction_result.get("success"):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=extraction_result.get("error", "Failed to extract deadlines")
-            )
-        
-        # Step 3: Create tasks from hard deadlines
+        # Create tasks and calendar events from extracted deadlines
         created_tasks = []
-        items = extraction_result.get("items", [])
+        created_events = []
         
-        for item in items:
-            if item.get("kind") != "hard_deadline":
-                continue
-            
+        for deadline_info in deadlines:
             # Parse date string to datetime
             try:
-                date_string = item.get("date", "")
-                # Try to parse the date (handles formats like "Sept 11", "9/15", etc.)
-                from dateutil import parser as date_parser
-                deadline_date = date_parser.parse(date_string, fuzzy=True)
-                
-                # If year is missing, assume current year or next year if date has passed
-                if deadline_date.year == datetime.now().year:
-                    if deadline_date < datetime.now():
-                        deadline_date = deadline_date.replace(year=datetime.now().year + 1)
-                        
-            except Exception as e:
-                # Skip if date parsing fails
+                deadline_date = datetime.fromisoformat(deadline_info.get("date"))
+            except (ValueError, TypeError):
+                # If date parsing fails, skip this item
                 continue
             
-            # Create task
-            task_type = item.get("type", "assignment")
+            # Create calendar event for the deadline
+            event_start = deadline_date.replace(hour=23, minute=59, second=0, microsecond=0)
+            event_end = event_start + timedelta(hours=1)
+            
+            new_event = Event(
+                user_id=current_user.id,
+                title=f"📅 {deadline_info.get('title', 'Untitled Task')}",
+                description=deadline_info.get("description", ""),
+                start_time=event_start,
+                end_time=event_end,
+                event_type="deadline",
+                source="syllabus"
+            )
+            db.add(new_event)
+            db.flush()  # Get the event ID
+            
+            # Create task linked to event
+            task_type = deadline_info.get("type", "assignment")
             new_task = Task(
                 user_id=current_user.id,
-                title=item.get("title", "Untitled Task"),
-                description=item.get("description", ""),
+                event_id=new_event.id,
+                title=deadline_info.get("title", "Untitled Task"),
+                description=deadline_info.get("description", ""),
                 deadline=deadline_date,
-                priority="high" if task_type in ["exam", "assessment"] else "medium",
+                priority="high" if task_type in ["exam", "quiz"] else "medium",
                 task_type=task_type,
-                estimated_hours=8 if task_type in ["exam", "project"] else 5,
-                source_type="syllabus_enhanced",
+                estimated_hours=deadline_info.get("estimated_hours", 5),
+                source_type="syllabus",
                 source_file=file.filename
             )
             
@@ -346,21 +341,32 @@ async def upload_syllabus_enhanced(
                 "type": new_task.task_type,
                 "description": new_task.description
             })
+            created_events.append({
+                "title": new_event.title,
+                "start_time": new_event.start_time.isoformat()
+            })
+        
+        # Save document record to database
+        document = Document(
+            user_id=current_user.id,
+            filename=file.filename,
+            file_type=file_extension.replace(".", ""),
+            content_text=text_content,
+            document_type="syllabus",
+            tasks_created=len(created_tasks)
+        )
+        db.add(document)
         
         db.commit()
         
         # Prepare response
         return {
-            "message": f"Successfully processed {file.filename} with enhanced extraction",
+            "message": f"Successfully processed {file.filename}",
             "file_saved": save_result["filename"],
-            "assessment_components": assessment_components,
-            "assessment_count": len(assessment_components),
-            "total_items_extracted": len(items),
             "tasks_created": len(created_tasks),
-            "hard_deadlines": len(extraction_result.get("hard_deadlines", [])),
-            "class_sessions": len(extraction_result.get("class_sessions", [])),
+            "events_created": len(created_events),
             "tasks": created_tasks,
-            "all_items": items,
+            "events": created_events,
             "extracted_text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content
         }
     
