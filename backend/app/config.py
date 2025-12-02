@@ -1,7 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
-import json
 
 
 class Settings(BaseSettings):
@@ -31,20 +30,17 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: Optional[str] = None
     
-    # CORS - Allow environment variable override
-    @property
-    def CORS_ORIGINS(self) -> list:
-        cors_env = os.getenv("CORS_ORIGINS")
-        if cors_env:
-            try:
-                return json.loads(cors_env)
-            except:
-                return cors_env.split(",")
-        return ["http://localhost:3000", "http://localhost:5173"]
-    
     class Config:
         env_file = ".env"
         case_sensitive = True
 
 
 settings = Settings()
+
+# CORS - Get from environment or use defaults
+def get_cors_origins() -> list:
+    cors_env = os.getenv("CORS_ORIGINS")
+    if cors_env:
+        # Support comma-separated list
+        return [origin.strip() for origin in cors_env.split(",")]
+    return ["http://localhost:3000", "http://localhost:5173"]
