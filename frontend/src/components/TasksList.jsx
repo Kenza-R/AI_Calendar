@@ -35,6 +35,25 @@ const TasksList = () => {
     }
   };
 
+  const handleDeleteTask = async (taskId, e) => {
+    e.stopPropagation(); // Prevent card click
+    if (window.confirm('Are you sure you want to delete this task?')) {
+      try {
+        await tasksAPI.delete(taskId);
+        fetchTasks();
+      } catch (error) {
+        console.error('Error deleting task:', error);
+        alert('Failed to delete task');
+      }
+    }
+  };
+
+  const handleEditTask = (task, e) => {
+    e.stopPropagation(); // Prevent card click
+    setSelectedTask(task);
+    setShowModal(true);
+  };
+
   const handleTaskClick = (task) => {
     setSelectedTask(task);
     setShowModal(true);
@@ -138,6 +157,22 @@ const TasksList = () => {
                     >
                       {task.priority}
                     </span>
+                  </div>
+                  <div className="task-actions">
+                    <button
+                      onClick={(e) => handleEditTask(task, e)}
+                      className="btn-edit-task"
+                      title="Edit task"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteTask(task.id, e)}
+                      className="btn-delete-task"
+                      title="Delete task"
+                    >
+                      🗑️
+                    </button>
                   </div>
                 </div>
 

@@ -23,11 +23,18 @@ def extract_deadlines_from_text(text: str, context: str = "syllabus") -> List[Di
 
 Analyze the following {context} text and extract EVERY single deadline, assignment, exam, quiz, presentation, paper, project, and important date mentioned.
 
+CRITICAL: First identify the YEAR and SEMESTER from the syllabus:
+- Look for "Spring 2024", "Fall 2023", "2023-2024", etc.
+- Look at the course start/end dates to determine the year
+- If semester is Spring (Jan-May), use that year
+- If semester is Fall (Aug-Dec), check if dates are in second half of year
+- When you see dates like "January 15" or "March 10" WITHOUT a year, use the identified year from the syllabus
+
 For EACH deadline/assignment found, return valid JSON in exactly this format:
 [
   {{
     "title": "Exact assignment/exam name from syllabus",
-    "date": "YYYY-MM-DD format or best estimate if fuzzy",
+    "date": "YYYY-MM-DD format using the correct year from syllabus context",
     "type": "assignment|exam|quiz|presentation|paper|deadline|reading|project|interview",
     "description": "What student needs to do",
     "estimated_hours": number between 1 and 20
@@ -36,11 +43,11 @@ For EACH deadline/assignment found, return valid JSON in exactly this format:
 
 CRITICAL REQUIREMENTS:
 1. Extract EVERY deadline mentioned - do not skip any
-2. Convert all dates to YYYY-MM-DD format when possible
-3. If you see "Due January 20", "Due Feb 3", "March 9" - convert these to dates
-4. Include the full descriptive title from the syllabus
-5. Return ONLY valid JSON array, nothing else
-6. If it looks like a deadline, include it
+2. Convert all dates to YYYY-MM-DD format using the CORRECT YEAR from the syllabus
+3. If you see "Due January 20" in a "Fall 2024" syllabus, the date is 2025-01-20 (Spring semester)
+4. If you see "Due September 10" in a "Fall 2024" syllabus, the date is 2024-09-10
+5. Include the full descriptive title from the syllabus
+6. Return ONLY valid JSON array, nothing else
 7. Be exhaustive - extract more items rather than fewer
 
 Syllabus text:
@@ -49,7 +56,7 @@ Syllabus text:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are an expert at extracting ALL deadline and assignment information. Return ONLY valid JSON array, no other text."},
+                {"role": "system", "content": "You are an expert at extracting ALL deadline and assignment information with correct years. Return ONLY valid JSON array, no other text."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,  # Lower temperature for consistency
