@@ -19,6 +19,17 @@
   align-items: center;
 }
 
+.dashboard-logo {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: -1.5px;
+  font-family: 'Arial Black', 'Arial Bold', sans-serif;
+  text-transform: uppercase;
+  color: #FFA366;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
 .dashboard-header h1 {
   margin: 0;
   font-size: 28px;

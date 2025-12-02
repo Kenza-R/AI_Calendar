@@ -30,7 +30,9 @@ const Register = () => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h1>AI Productivity Calendar</h1>
+        <div className="logo-container">
+          <h1 className="logo-text">SCHEDULY</h1>
+        </div>
         <h2>Register</h2>
         
         {error && <div className="error-message">{error}</div>}

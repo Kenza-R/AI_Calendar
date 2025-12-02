@@ -31,7 +31,7 @@ const Dashboard = () => {
     <div className="dashboard">
       <header className="dashboard-header">
         <div className="header-content">
-          <h1>🗓️ AI Productivity Calendar</h1>
+          <h1 className="dashboard-logo">SCHEDULY</h1>
           <div className="header-user">
             <span>Welcome, {user.full_name || user.email}</span>
             <button onClick={handleLogout} className="btn-logout">
