@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { documentsAPI } from '../services/api';
 import './UploadDocument.css';
 
-const UploadDocument = () => {
+const UploadDocument = ({ onUploadSuccess }) => {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -43,6 +43,11 @@ const UploadDocument = () => {
       setFile(null);
       // Reset file input
       document.getElementById('file-input').value = '';
+      
+      // Notify parent component to refresh task list
+      if (onUploadSuccess) {
+        onUploadSuccess();
+      }
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to upload document. Please try again.');
     } finally {

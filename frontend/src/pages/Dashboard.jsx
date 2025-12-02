@@ -11,6 +11,7 @@ const Dashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('calendar');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!user) {
@@ -21,6 +22,11 @@ const Dashboard = () => {
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handleUploadSuccess = () => {
+    // Refresh data by incrementing key
+    setRefreshKey(prev => prev + 1);
   };
 
   if (!user) {
@@ -69,10 +75,10 @@ const Dashboard = () => {
       </nav>
 
       <main className="dashboard-content">
-        {activeTab === 'calendar' && <CalendarView />}
-        {activeTab === 'tasks' && <TasksList />}
-        {activeTab === 'upload' && <UploadDocument />}
-        {activeTab === 'overview' && <ScheduleOverview />}
+        {activeTab === 'calendar' && <CalendarView key={`calendar-${refreshKey}`} />}
+        {activeTab === 'tasks' && <TasksList key={`tasks-${refreshKey}`} />}
+        {activeTab === 'upload' && <UploadDocument onUploadSuccess={handleUploadSuccess} />}
+        {activeTab === 'overview' && <ScheduleOverview key={`overview-${refreshKey}`} />}
       </main>
     </div>
   );
