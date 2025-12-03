@@ -1,6 +1,8 @@
 """
 CrewAI-based extraction service for production use.
 Integrates the 4-agent pipeline into the API.
+
+Note: Requires Python 3.10+ and crewai package installed.
 """
 import json
 import re
@@ -8,8 +10,13 @@ from typing import List, Dict, Optional
 from pathlib import Path
 from datetime import datetime
 
-# CrewAI imports
-from crewai import Agent, Task, Crew
+# Try to import CrewAI (requires Python 3.10+)
+try:
+    from crewai import Agent, Task, Crew
+    CREWAI_AVAILABLE = True
+except (ImportError, TypeError):
+    CREWAI_AVAILABLE = False
+    Agent = Task = Crew = None
 
 # Local imports
 from app.config import settings
@@ -69,56 +76,62 @@ def extract_date_candidates(indexed_lines: List[Dict]) -> List[Dict]:
 
 
 # ============================================================================
-# CrewAI Agents
+# CrewAI Agents (only created if CrewAI is available)
 # ============================================================================
 
-segmentation_agent = Agent(
-    llm="gpt-4o-mini",
-    role="Syllabus Segmentation Agent",
-    goal="Segment a syllabus into clean, date-based schedule blocks and non-schedule blocks.",
-    backstory=(
-        "You specialize in understanding complex university syllabi and reconstructing "
-        "schedule information into coherent blocks, never inventing dates."
-    ),
-    allow_delegation=False,
-    verbose=False,
-)
+if CREWAI_AVAILABLE:
+    segmentation_agent = Agent(
+        llm="gpt-4o-mini",
+        role="Syllabus Segmentation Agent",
+        goal="Segment a syllabus into clean, date-based schedule blocks and non-schedule blocks.",
+        backstory=(
+            "You specialize in understanding complex university syllabi and reconstructing "
+            "schedule information into coherent blocks, never inventing dates."
+        ),
+        allow_delegation=False,
+        verbose=False,
+    )
+else:
+    segmentation_agent = None
 
-extraction_agent = Agent(
-    llm="gpt-4o-mini",
-    role="Syllabus Task Extraction Agent",
-    goal="Extract structured class sessions, readings, and hard deadlines from schedule blocks.",
-    backstory=(
-        "You are an expert at reading university syllabi and turning unstructured schedule "
-        "entries into structured tasks, using assessment context to improve accuracy."
-    ),
-    allow_delegation=False,
-    verbose=False,
-)
+if CREWAI_AVAILABLE:
+    extraction_agent = Agent(
+        llm="gpt-4o-mini",
+        role="Syllabus Task Extraction Agent",
+        goal="Extract structured class sessions, readings, and hard deadlines from schedule blocks.",
+        backstory=(
+            "You are an expert at reading university syllabi and turning unstructured schedule "
+            "entries into structured tasks, using assessment context to improve accuracy."
+        ),
+        allow_delegation=False,
+        verbose=False,
+    )
 
-qa_agent = Agent(
-    llm="gpt-4o-mini",
-    role="Syllabus QA & Consistency Agent",
-    goal="Audit extracted items to ensure completeness and consistency with grading components.",
-    backstory=(
-        "You act as a rigorous auditor, verifying coverage of graded components and detecting "
-        "inconsistencies or duplicates without inventing new assessments or dates."
-    ),
-    allow_delegation=False,
-    verbose=False,
-)
+    qa_agent = Agent(
+        llm="gpt-4o-mini",
+        role="Syllabus QA & Consistency Agent",
+        goal="Audit extracted items to ensure completeness and consistency with grading components.",
+        backstory=(
+            "You act as a rigorous auditor, verifying coverage of graded components and detecting "
+            "inconsistencies or duplicates without inventing new assessments or dates."
+        ),
+        allow_delegation=False,
+        verbose=False,
+    )
 
-workload_estimation_agent = Agent(
-    llm="gpt-4o-mini",
-    role="Academic Workload Estimation Agent",
-    goal="Estimate realistic time requirements for all tasks and deadlines.",
-    backstory=(
-        "You are an experienced academic advisor who understands student workloads. You provide "
-        "conservative, realistic estimates considering assignment type, complexity, and academic standards."
-    ),
-    allow_delegation=False,
-    verbose=False,
-)
+    workload_estimation_agent = Agent(
+        llm="gpt-4o-mini",
+        role="Academic Workload Estimation Agent",
+        goal="Estimate realistic time requirements for all tasks and deadlines.",
+        backstory=(
+            "You are an experienced academic advisor who understands student workloads. You provide "
+            "conservative, realistic estimates considering assignment type, complexity, and academic standards."
+        ),
+        allow_delegation=False,
+        verbose=False,
+    )
+else:
+    extraction_agent = qa_agent = workload_estimation_agent = None
 
 
 # ============================================================================
@@ -139,6 +152,13 @@ def extract_with_crew_ai(
     Returns:
         Dict with items_with_workload, qa_report, and metadata
     """
+    if not CREWAI_AVAILABLE:
+        return {
+            "success": False,
+            "error": "CrewAI not available. Requires Python 3.10+ and crewai package.",
+            "items_with_workload": [],
+        }
+    
     try:
         # Step 1: Preprocess text into indexed lines
         lines = text.splitlines()
