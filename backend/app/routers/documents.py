@@ -16,7 +16,9 @@ from app.utils.llm_service import extract_deadlines_from_text
 from app.utils.upload_pdf_copy import save_uploaded_file, get_latest_pdf
 from app.utils.test_assessment_parser_copy import extract_assessment_components_api
 from app.utils.test_deadline_extraction_copy import extract_deadlines_and_sessions_api
+from app.utils.crewai_extraction_service import extract_deadlines_and_tasks
 import json
+import re
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -428,4 +430,181 @@ async def extract_assessments(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error extracting assessments: {str(e)}"
+        )
+
+
+@router.post("/upload-syllabus-crewai", response_model=dict)
+async def upload_syllabus_crewai(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload syllabus using the advanced 4-agent CrewAI pipeline with workload estimation.
+    This is the most sophisticated extraction method available.
+    """
+    # Validate file type
+    allowed_extensions = [".pdf", ".txt", ".docx"]
+    file_extension = "." + file.filename.split(".")[-1].lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
+        )
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Run CrewAI extraction
+        extraction_result = extract_deadlines_and_tasks(file_content, file.filename)
+        
+        if not extraction_result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=extraction_result.get("error", "Extraction failed")
+            )
+        
+        items_with_workload = extraction_result.get("items_with_workload", [])
+        
+        # Helper function to parse dates
+        def parse_date_string(date_str: str) -> Optional[datetime]:
+            """Parse various date formats to datetime."""
+            if not date_str:
+                return None
+            
+            # Try ISO format first
+            try:
+                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            except:
+                pass
+            
+            # Try common formats
+            formats = [
+                "%Y-%m-%d",
+                "%m/%d/%Y",
+                "%m-%d-%Y",
+                "%b %d",
+                "%B %d",
+                "%b %d, %Y",
+                "%B %d, %Y",
+            ]
+            
+            for fmt in formats:
+                try:
+                    dt = datetime.strptime(date_str, fmt)
+                    # If no year provided, use current year
+                    if dt.year == 1900:
+                        dt = dt.replace(year=datetime.now().year)
+                    return dt
+                except:
+                    continue
+            
+            return None
+        
+        # Parse document text for database
+        if file_extension == ".pdf":
+            text_content = parse_pdf(file_content)
+        else:
+            text_content = parse_text_document(file_content, file_extension)
+        
+        # Create tasks and events from extracted items
+        created_tasks = []
+        created_events = []
+        
+        for item in items_with_workload:
+            item_type = item.get("type", "deadline")
+            
+            # Skip class sessions (not deadlines)
+            if item_type == "class_session":
+                continue
+            
+            # Parse date
+            date_str = item.get("date", "")
+            deadline_date = parse_date_string(date_str)
+            
+            if not deadline_date:
+                continue
+            
+            # Create calendar event
+            event_start = deadline_date.replace(hour=23, minute=59, second=0, microsecond=0)
+            event_end = event_start + timedelta(hours=1)
+            
+            new_event = Event(
+                user_id=current_user.id,
+                title=f"📅 {item.get('title', 'Untitled Task')}",
+                description=item.get("description", ""),
+                start_time=event_start,
+                end_time=event_end,
+                event_type="deadline",
+                source="syllabus_crewai"
+            )
+            db.add(new_event)
+            db.flush()
+            
+            # Create task with workload estimate
+            estimated_hours = item.get("estimated_hours", 5)
+            workload_breakdown = item.get("workload_breakdown", "")
+            
+            task_description = item.get("description", "")
+            if workload_breakdown:
+                task_description += f"\n\n⏱️ Workload: {workload_breakdown}"
+            
+            new_task = Task(
+                user_id=current_user.id,
+                event_id=new_event.id,
+                title=item.get("title", "Untitled Task"),
+                description=task_description,
+                deadline=deadline_date,
+                priority="high" if item_type in ["exam", "quiz"] else "medium",
+                task_type=item_type,
+                estimated_hours=estimated_hours,
+                source_type="syllabus_crewai",
+                source_file=file.filename
+            )
+            
+            db.add(new_task)
+            created_tasks.append({
+                "title": new_task.title,
+                "deadline": new_task.deadline.isoformat(),
+                "type": new_task.task_type,
+                "estimated_hours": estimated_hours,
+                "workload_breakdown": workload_breakdown
+            })
+            created_events.append({
+                "title": new_event.title,
+                "start_time": new_event.start_time.isoformat()
+            })
+        
+        # Save document record
+        document = Document(
+            user_id=current_user.id,
+            filename=file.filename,
+            file_type=file_extension.replace(".", ""),
+            content_text=text_content,
+            document_type="syllabus",
+            tasks_created=len(created_tasks)
+        )
+        db.add(document)
+        
+        db.commit()
+        
+        return {
+            "message": f"Successfully processed {file.filename} with CrewAI pipeline",
+            "document_id": document.id,
+            "tasks_created": len(created_tasks),
+            "events_created": len(created_events),
+            "total_estimated_hours": extraction_result.get("total_estimated_hours", 0),
+            "tasks": created_tasks,
+            "events": created_events,
+            "qa_summary": extraction_result.get("qa_report", {}).get("summary", ""),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing document: {str(e)}"
         )
