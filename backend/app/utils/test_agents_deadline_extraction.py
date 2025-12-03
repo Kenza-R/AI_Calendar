@@ -353,6 +353,39 @@ qa_agent = Agent(
     verbose=True,
 )
 
+workload_estimation_agent = Agent(
+    llm="gpt-4o-mini",
+    role="Academic Workload Estimation Agent",
+    goal=(
+        "Analyze each deadline, assignment, reading, and task to estimate the time required "
+        "for completion, providing realistic workload estimates in hours to help students "
+        "plan their schedules effectively."
+    ),
+    backstory=(
+        "You are an experienced academic advisor who understands student workloads across "
+        "different types of assignments and tasks. You have deep knowledge of how long typical "
+        "academic activities take:\n\n"
+        "- Reading assignments (pages per hour, comprehension levels)\n"
+        "- Written assignments (research papers, essays, reports by length and complexity)\n"
+        "- Exams and quizzes (study time based on material coverage)\n"
+        "- Projects (scope, research, implementation, writing)\n"
+        "- Presentations (preparation, practice, slides)\n"
+        "- Problem sets and homework\n"
+        "- Class preparation and participation\n\n"
+        "You consider factors like:\n"
+        "- Assignment type and deliverable format\n"
+        "- Complexity and depth required\n"
+        "- Research or reading involved\n"
+        "- Typical student capabilities\n"
+        "- Industry-standard time estimates for academic work\n\n"
+        "You provide conservative, realistic estimates that help students avoid underestimating "
+        "their workload. You express estimates in hours and can break down complex tasks into "
+        "sub-components when helpful."
+    ),
+    allow_delegation=False,
+    verbose=True,
+)
+
 # ---------------------------------------------------------------------
 # CrewAI Tasks
 # ---------------------------------------------------------------------
@@ -479,13 +512,67 @@ qa_task = Task(
     agent=qa_agent,
 )
 
+workload_estimation_task = Task(
+    description=(
+        "You are the Academic Workload Estimation Agent.\n\n"
+        "INPUTS YOU RECEIVE:\n"
+        "- A list of validated items from the syllabus: {validated_items}\n"
+        "- Assessment components with their types and weights: {assessment_components}\n"
+        "- Full syllabus text for additional context: {full_text}\n\n"
+        "YOUR GOAL:\n"
+        "For each item (deadline, reading, assignment, exam, project, etc.), estimate the realistic "
+        "time a student would need to complete it successfully.\n\n"
+        "ESTIMATION GUIDELINES:\n"
+        "- **Readings**: Consider pages/chapters mentioned. Typical academic reading: 15-25 pages/hour "
+        "for moderate difficulty, 10-15 pages/hour for dense material. Add time for note-taking.\n"
+        "- **Essays/Papers**: 2-4 hours per page for research + writing + revision. 3-4 page paper = 8-15 hours.\n"
+        "- **Exams**: Study time = 2-4 hours per hour of exam, depending on coverage and difficulty. "
+        "Midterms typically 6-12 hours study, finals 15-25 hours.\n"
+        "- **Projects**: Small projects 10-20 hours, major projects 30-60+ hours including research, "
+        "implementation, writing, and presentation prep.\n"
+        "- **Presentations**: 1-2 hours per minute of presentation (research + slides + practice).\n"
+        "- **Problem Sets**: 3-8 hours depending on complexity and number of problems.\n"
+        "- **Class Preparation**: 1-2 hours per class session for readings and prep.\n"
+        "- **Reflection/Journal**: 1-3 hours depending on depth required.\n\n"
+        "Consider factors like:\n"
+        "- Weight/importance (higher weight = more thorough preparation needed)\n"
+        "- Complexity indicators in the description\n"
+        "- Whether it requires research, analysis, or creative work\n"
+        "- Whether it's group work (adjust accordingly)\n"
+        "- Any specified length or scope requirements\n\n"
+        "OUTPUT FORMAT:\n"
+        "Return a JSON array with all items including workload estimates:\n"
+        "[\n"
+        "  {\n"
+        "    \"date\": \"Oct 22\",\n"
+        "    \"type\": \"assignment\",\n"
+        "    \"title\": \"Research Paper\",\n"
+        "    \"description\": \"...\",\n"
+        "    \"estimated_hours\": 15,\n"
+        "    \"workload_breakdown\": \"Research (5h) + Writing (7h) + Revision (3h)\",\n"
+        "    \"confidence\": \"high\" | \"medium\" | \"low\",\n"
+        "    \"notes\": \"Additional context or assumptions for the estimate\",\n"
+        "    ... /* all other original fields */\n"
+        "  },\n"
+        "  ...\n"
+        "]\n\n"
+        "Be realistic and slightly conservative. Students should be able to complete the work in the "
+        "estimated time without rushing."
+    ),
+    expected_output=(
+        "A JSON array of all items with added workload estimation fields: 'estimated_hours', "
+        "'workload_breakdown', 'confidence', and 'notes'."
+    ),
+    agent=workload_estimation_agent,
+)
+
 
 # ---------------------------------------------------------------------
 # Main execution
 # ---------------------------------------------------------------------
 def main():
     print("=" * 80)
-    print("📅 DEADLINE EXTRACTION TEST (CrewAI, 3-Agent Pipeline)")
+    print("📅 DEADLINE EXTRACTION TEST (CrewAI, 4-Agent Pipeline with Workload Estimation)")
     print("=" * 80)
     print()
 
@@ -720,13 +807,53 @@ def main():
 
     validated_items = qa_data.get("validated_items") or final_items
 
-    # ----- 8) Print summary & details -----
+    # ----- 8) Workload estimation (Agent 4) -----
+    print("🤖 Step 6: Estimating workload for all tasks (Agent 4)...")
+    workload_inputs = {
+        "validated_items": json.dumps(validated_items, indent=2),
+        "assessment_components": json.dumps(assessment_components, indent=2),
+        "full_text": text[:5000],  # First 5000 chars for context
+    }
+
+    workload_crew = Crew(
+        agents=[workload_estimation_agent],
+        tasks=[workload_estimation_task],
+        verbose=True,
+        memory=False,
+    )
+    workload_result_raw = workload_crew.kickoff(inputs=workload_inputs)
+
+    # Handle CrewOutput object
+    if hasattr(workload_result_raw, 'raw'):
+        workload_result_str = workload_result_raw.raw
+    elif hasattr(workload_result_raw, 'json'):
+        workload_result_str = workload_result_raw.json
+    else:
+        workload_result_str = str(workload_result_raw)
+
+    try:
+        items_with_workload = json.loads(workload_result_str.strip())
+    except Exception:
+        m = re.search(r"\[.*\]", workload_result_str, re.DOTALL)
+        if not m:
+            print("⚠️ Could not parse workload output as JSON. Using validated items without workload.")
+            items_with_workload = validated_items
+        else:
+            items_with_workload = json.loads(m.group(0))
+
+    if not isinstance(items_with_workload, list):
+        print("⚠️ Workload output was not a list. Using validated items without workload.")
+        items_with_workload = validated_items
+
+    print(f"✅ Added workload estimates to {len(items_with_workload)} items\n")
+
+    # ----- 9) Print summary & details -----
     print("=" * 80)
-    print(f"📋 VALIDATED {len(validated_items)} ITEMS (deadlines + class sessions)")
+    print(f"📋 FINAL RESULTS: {len(items_with_workload)} ITEMS WITH WORKLOAD ESTIMATES")
     print("=" * 80)
     print()
 
-    for i, item in enumerate(validated_items, 1):
+    for i, item in enumerate(items_with_workload, 1):
         print(f"Item #{i}:")
         print(f"  📅 Date:        {item.get('date', 'N/A')}")
         print(f"  🏷️  Type:        {item.get('type', 'N/A')}")
@@ -736,6 +863,17 @@ def main():
             print(f"  📝 Description: {desc}")
         if "assessment_name" in item:
             print(f"  🎯 Assessment:  {item['assessment_name']}")
+        
+        # Display workload estimate
+        if "estimated_hours" in item:
+            hours = item.get("estimated_hours")
+            confidence = item.get("confidence", "N/A")
+            print(f"  ⏱️  Estimated Time: {hours} hours (confidence: {confidence})")
+            if "workload_breakdown" in item:
+                print(f"      Breakdown: {item['workload_breakdown']}")
+            if "notes" in item and item["notes"]:
+                print(f"      Notes: {item['notes']}")
+        
         if item.get("type") == "class_session":
             readings = item.get("readings") or []
             if readings:
@@ -776,17 +914,20 @@ def main():
             print(f"  - [{inc.get('type')}] {inc.get('details')}")
         print()
 
-    # ----- 9) Optional: save JSON -----
-    save_option = input("💾 Save validated items + QA report to JSON file? (y/n): ").lower().strip()
+    # ----- 10) Optional: save JSON -----
+    save_option = input("💾 Save final items with workload estimates to JSON file? (y/n): ").lower().strip()
     if save_option == "y":
         output_dir = backend_dir / "uploads"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / f"{file_path.stem}_tasks_crewai.json"
+        output_file = output_dir / f"{file_path.stem}_tasks_with_workload.json"
         with open(output_file, "w") as f:
             json.dump(
                 {
-                    "validated_items": validated_items,
+                    "items_with_workload": items_with_workload,
                     "qa_report": qa_data,
+                    "total_estimated_hours": sum(
+                        item.get("estimated_hours", 0) for item in items_with_workload
+                    ),
                 },
                 f,
                 indent=2,
