@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Test script for syllabus analysis using improved LLM service
+Test script for syllabus analysis using CrewAI extraction service
 """
 import sys
 sys.path.insert(0, '/Users/kmr/Documents/GitHub/AI_Calendar/backend')
 
-from app.utils.llm_service import extract_deadlines_from_text
+from app.utils.crewai_extraction_service import extract_deadlines_and_tasks
 import json
 
 # Sample syllabus text (similar to what would be extracted from a PDF)
@@ -58,14 +58,20 @@ Monday and Wednesday: 2:00 PM - 4:00 PM
 Thursday: 10:00 AM - 12:00 PM
 """
 
-print("Testing syllabus analysis with improved extraction...\n")
+print("Testing syllabus analysis with CrewAI extraction...\n")
 print("=" * 60)
 
-# Extract deadlines
-deadlines = extract_deadlines_from_text(sample_syllabus, context="syllabus")
+# Extract deadlines using CrewAI
+# Note: CrewAI expects bytes, so we encode the text
+result = extract_deadlines_and_tasks(sample_syllabus.encode('utf-8'), "test_syllabus.txt")
 
-print(f"\nFound {len(deadlines)} deadlines:\n")
-print(json.dumps(deadlines, indent=2))
+if not result.get("success"):
+    print(f"❌ Error: {result.get('error', 'Unknown error')}")
+    sys.exit(1)
+
+items = result.get("items_with_workload", [])
+print(f"\nFound {len(items)} items:\n")
+print(json.dumps(items, indent=2))
 
 # Verify we found the expected deadlines
 expected_assignments = [
@@ -83,8 +89,8 @@ expected_assignments = [
 ]
 
 found_items = []
-for deadline in deadlines:
-    title_lower = deadline.get('title', '').lower()
+for item in items:
+    title_lower = item.get('title', '').lower()
     for expected in expected_assignments:
         if expected.lower() in title_lower:
             found_items.append(expected)
@@ -94,8 +100,9 @@ print("\n" + "=" * 60)
 print(f"\nExpected items: {len(expected_assignments)}")
 print(f"Found items: {len(found_items)}")
 print(f"Match rate: {len(found_items) / len(expected_assignments) * 100:.1f}%")
+print(f"Total estimated hours: {result.get('total_estimated_hours', 0)}")
 
 if len(found_items) > 0:
     print(f"\n✅ Successfully extracted: {', '.join(set(found_items))}")
 else:
-    print("\n⚠️  No assignments found - falling back to keyword extraction")
+    print("\n⚠️  No assignments found")

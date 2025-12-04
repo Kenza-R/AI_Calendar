@@ -10,12 +10,7 @@ from app.models.document import Document
 from app.models.event import Event
 from app.utils.auth import get_current_user
 from app.utils.pdf_parser import parse_pdf, parse_text_document
-from app.utils.llm_service import extract_deadlines_from_text
-
-# Import enhanced copy utilities
-from app.utils.upload_pdf_copy import save_uploaded_file, get_latest_pdf
-from app.utils.test_assessment_parser_copy import extract_assessment_components_api
-from app.utils.test_deadline_extraction_copy import extract_deadlines_and_sessions_api
+# Import CrewAI extraction service (replaces old LLM services)
 from app.utils.crewai_extraction_service import extract_deadlines_and_tasks
 import json
 import re
@@ -83,7 +78,7 @@ async def extract_assessments(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Extract grading/assessment components from a syllabus.
+    Extract grading/assessment components from a syllabus using CrewAI.
     Returns structured information about exams, projects, assignments, etc.
     """
     allowed_extensions = [".pdf", ".txt", ".docx"]
@@ -98,14 +93,8 @@ async def extract_assessments(
     try:
         file_content = await file.read()
         
-        # Parse document
-        if file_extension == ".pdf":
-            text_content = parse_pdf(file_content)
-        else:
-            text_content = parse_text_document(file_content, file_extension)
-        
-        # Extract assessment components
-        result = extract_assessment_components_api(text_content)
+        # Use CrewAI extraction service
+        result = extract_deadlines_and_tasks(file_content, file.filename)
         
         if not result.get("success"):
             raise HTTPException(
@@ -113,11 +102,28 @@ async def extract_assessments(
                 detail=result.get("error", "Failed to extract assessments")
             )
         
+        # Extract assessment components from the CrewAI result
+        items = result.get("items_with_workload", [])
+        components = []
+        total_weight = 0
+        
+        for item in items:
+            if item.get("type") != "class_session":
+                component = {
+                    "name": item.get("title", ""),
+                    "type": item.get("type", "assignment"),
+                    "date": item.get("date", ""),
+                    "weight": 0,  # CrewAI doesn't extract weights, but provides workload
+                    "estimated_hours": item.get("estimated_hours", 0),
+                    "description": item.get("description", "")
+                }
+                components.append(component)
+        
         return {
             "message": f"Successfully extracted assessment components from {file.filename}",
-            "components": result.get("components", []),
-            "count": result.get("count", 0),
-            "total_weight": result.get("total_weight", 0)
+            "components": components,
+            "count": len(components),
+            "total_estimated_hours": result.get("total_estimated_hours", 0)
         }
     
     except HTTPException:

@@ -3,7 +3,7 @@ from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from app.models.calendar_integration import CalendarIntegration
-from app.utils.llm_service import extract_deadlines_from_text
+from app.utils.crewai_extraction_service import extract_deadlines_and_tasks
 
 
 class GmailService:
@@ -55,13 +55,24 @@ class GmailService:
                 subject = self._get_header(msg_data, 'Subject')
                 body = self._get_email_body(msg_data)
                 
-                # Use LLM to extract deadlines
-                extracted = extract_deadlines_from_text(
-                    f"Subject: {subject}\n\n{body}",
-                    context="email"
-                )
+                # Combine subject and body for CrewAI extraction
+                email_text = f"Subject: {subject}\n\n{body}"
                 
-                deadlines.extend(extracted)
+                # Use CrewAI to extract deadlines from email
+                # Note: CrewAI expects bytes, so we encode the text
+                result = extract_deadlines_and_tasks(email_text.encode('utf-8'), f"email_{message['id']}.txt")
+                
+                if result.get("success"):
+                    items = result.get("items_with_workload", [])
+                    for item in items:
+                        if item.get("type") != "class_session":
+                            deadlines.append({
+                                "title": item.get("title", ""),
+                                "date": item.get("date", ""),
+                                "type": item.get("type", "deadline"),
+                                "description": item.get("description", ""),
+                                "estimated_hours": item.get("estimated_hours", 0)
+                            })
             
             return deadlines
         
