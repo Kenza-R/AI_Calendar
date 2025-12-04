@@ -9,7 +9,7 @@ services:
     startCommand: cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.12.0
       - key: DATABASE_URL
         value: sqlite:///./ai_calendar.db
       - key: SECRET_KEY
