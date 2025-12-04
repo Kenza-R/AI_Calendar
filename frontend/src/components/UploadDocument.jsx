@@ -37,8 +37,8 @@ const UploadDocument = ({ onUploadSuccess }) => {
     setError('');
 
     try {
-      // Use enhanced upload endpoint for better extraction
-      const response = await documentsAPI.uploadSyllabusEnhanced(file);
+      // Use CrewAI upload endpoint with 4-agent pipeline and workload estimation
+      const response = await documentsAPI.uploadSyllabusCrewAI(file);
       setResult(response.data);
       setFile(null);
       // Reset file input
@@ -104,6 +104,12 @@ const UploadDocument = ({ onUploadSuccess }) => {
                 <div className="stat-number">{result.tasks_created}</div>
                 <div className="stat-label">Tasks Created</div>
               </div>
+              {result.total_estimated_hours > 0 && (
+                <div className="stat-card">
+                  <div className="stat-number">{result.total_estimated_hours}h</div>
+                  <div className="stat-label">Total Workload</div>
+                </div>
+              )}
               {result.assessment_count > 0 && (
                 <div className="stat-card">
                   <div className="stat-number">{result.assessment_count}</div>
@@ -152,7 +158,17 @@ const UploadDocument = ({ onUploadSuccess }) => {
                       </div>
                       <div className="task-deadline">
                         📅 {new Date(task.deadline).toLocaleDateString()}
+                        {task.estimated_hours && (
+                          <span style={{ marginLeft: '10px' }}>
+                            ⏱️ {task.estimated_hours}h estimated
+                          </span>
+                        )}
                       </div>
+                      {task.workload_breakdown && (
+                        <div className="task-description" style={{ fontStyle: 'italic', color: '#666' }}>
+                          {task.workload_breakdown}
+                        </div>
+                      )}
                       {task.description && (
                         <div className="task-description">{task.description}</div>
                       )}

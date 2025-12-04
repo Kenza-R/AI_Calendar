@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
 from app.database import get_db
@@ -468,11 +468,19 @@ async def upload_syllabus_crewai(
         
         items_with_workload = extraction_result.get("items_with_workload", [])
         
+        # Debug: Print first few items to see the date format
+        print(f"📊 CrewAI extracted {len(items_with_workload)} items")
+        if items_with_workload:
+            print(f"📋 Sample item: {items_with_workload[0]}")
+        
         # Helper function to parse dates
         def parse_date_string(date_str: str) -> Optional[datetime]:
             """Parse various date formats to datetime."""
             if not date_str:
                 return None
+            
+            # Clean the date string
+            date_str = date_str.strip()
             
             # Try ISO format first
             try:
@@ -480,15 +488,22 @@ async def upload_syllabus_crewai(
             except:
                 pass
             
-            # Try common formats
+            # Try common formats (expanded list)
             formats = [
                 "%Y-%m-%d",
                 "%m/%d/%Y",
+                "%m/%d/%y",
                 "%m-%d-%Y",
-                "%b %d",
-                "%B %d",
+                "%d/%m/%Y",
                 "%b %d, %Y",
                 "%B %d, %Y",
+                "%b. %d, %Y",
+                "%b %d",
+                "%B %d",
+                "%b. %d",
+                "%d %b %Y",
+                "%d %B %Y",
+                "%Y/%m/%d",
             ]
             
             for fmt in formats:
@@ -501,6 +516,19 @@ async def upload_syllabus_crewai(
                 except:
                     continue
             
+            # Try to extract date using regex as last resort
+            import re
+            # Match patterns like "Jan 15", "January 15", "1/15", etc.
+            month_match = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})', date_str, re.IGNORECASE)
+            if month_match:
+                try:
+                    month_str = month_match.group(1)
+                    day_str = month_match.group(2)
+                    dt = datetime.strptime(f"{month_str} {day_str} {datetime.now().year}", "%b %d %Y")
+                    return dt
+                except:
+                    pass
+            
             return None
         
         # Parse document text for database
@@ -512,6 +540,7 @@ async def upload_syllabus_crewai(
         # Create tasks and events from extracted items
         created_tasks = []
         created_events = []
+        skipped_items = []
         
         for item in items_with_workload:
             item_type = item.get("type", "deadline")
@@ -525,6 +554,8 @@ async def upload_syllabus_crewai(
             deadline_date = parse_date_string(date_str)
             
             if not deadline_date:
+                skipped_items.append({"item": item.get("title", "Unknown"), "date": date_str})
+                print(f"⚠️ Skipped item - could not parse date: '{date_str}' for task: {item.get('title', 'Unknown')}")
                 continue
             
             # Create calendar event

@@ -76,10 +76,14 @@ def extract_date_candidates(indexed_lines: List[Dict]) -> List[Dict]:
 
 
 # ============================================================================
-# CrewAI Agents (only created if CrewAI is available)
+# CrewAI Agents (initialized lazily when needed)
 # ============================================================================
 
-if CREWAI_AVAILABLE:
+def create_agents():
+    """Create and return all agents. Only called when extraction is performed."""
+    if not CREWAI_AVAILABLE:
+        raise ImportError("CrewAI is not available")
+    
     segmentation_agent = Agent(
         llm="gpt-4o-mini",
         role="Syllabus Segmentation Agent",
@@ -91,10 +95,7 @@ if CREWAI_AVAILABLE:
         allow_delegation=False,
         verbose=False,
     )
-else:
-    segmentation_agent = None
-
-if CREWAI_AVAILABLE:
+    
     extraction_agent = Agent(
         llm="gpt-4o-mini",
         role="Syllabus Task Extraction Agent",
@@ -130,8 +131,8 @@ if CREWAI_AVAILABLE:
         allow_delegation=False,
         verbose=False,
     )
-else:
-    extraction_agent = qa_agent = workload_estimation_agent = None
+    
+    return segmentation_agent, extraction_agent, qa_agent, workload_estimation_agent
 
 
 # ============================================================================
@@ -160,6 +161,8 @@ def extract_with_crew_ai(
         }
     
     try:
+        # Create agents (lazy initialization)
+        segmentation_agent, extraction_agent, qa_agent, workload_estimation_agent = create_agents()
         # Step 1: Preprocess text into indexed lines
         lines = text.splitlines()
         indexed_lines = [{"index": i, "text": line} for i, line in enumerate(lines)]
@@ -193,7 +196,7 @@ def extract_with_crew_ai(
         )
         
         seg_inputs = {
-            "indexed_lines": json.dumps(indexed_lines[:20], indent=2),  # Limit for API
+            "indexed_lines": json.dumps(indexed_lines, indent=2),  # Process all lines
             "date_candidates": json.dumps(date_candidates, indent=2),
             "sections_hint": json.dumps([]),
         }
@@ -233,7 +236,7 @@ def extract_with_crew_ai(
         )
         
         all_items = []
-        for block in schedule_blocks[:10]:  # Limit to first 10 blocks
+        for block in schedule_blocks:  # Process all blocks
             block_inputs = {
                 "block_text": block.get("raw_block", ""),
                 "date_string": block.get("date_string", ""),

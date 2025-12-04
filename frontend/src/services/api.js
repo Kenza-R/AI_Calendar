@@ -70,6 +70,14 @@ export const documentsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // CrewAI upload with 4-agent pipeline and workload estimation
+  uploadSyllabusCrewAI: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/documents/upload-syllabus-crewai', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   // Extract assessment components only
   extractAssessments: (file) => {
     const formData = new FormData();
