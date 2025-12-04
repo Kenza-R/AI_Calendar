@@ -341,3 +341,28 @@ async def upload_syllabus_crewai(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing document: {str(e)}"
         )
+
+
+@router.post("/upload-syllabus-enhanced", response_model=dict)
+async def upload_syllabus_enhanced(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Alias for upload-syllabus-crewai for backwards compatibility.
+    Routes to the CrewAI pipeline.
+    """
+    return await upload_syllabus_crewai(file, current_user, db)
+
+
+@router.post("/upload-syllabus", response_model=dict)
+async def upload_syllabus(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Default syllabus upload endpoint. Routes to CrewAI pipeline.
+    """
+    return await upload_syllabus_crewai(file, current_user, db)
