@@ -210,6 +210,45 @@
   color: #666;
 }
 
+/* Optional task styling */
+.task-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.optional-task {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.optional-badge {
+  background: #8b5cf6;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: help;
+  transition: all 0.3s;
+}
+
+.optional-badge:hover {
+  background: #7c3aed;
+  transform: scale(1.05);
+}
+
+.task-conditions {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #92400e;
+  line-height: 1.4;
+}
+
 @media (max-width: 768px) {
   .tasks-grid {
     grid-template-columns: 1fr;
@@ -223,5 +262,9 @@
 
   .btn-new-task {
     width: 100%;
+  }
+
+  .task-badges {
+    flex-wrap: wrap;
   }
 }

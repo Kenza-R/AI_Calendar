@@ -18,6 +18,8 @@ class Task(Base):
     task_type = Column(String)  # exam_prep, interview_prep, assignment, reading
     prep_material = Column(Text)  # JSON string containing flashcards, quiz questions, etc.
     estimated_hours = Column(Integer)
+    is_optional = Column(Boolean, default=False)  # Whether task is optional/conditional
+    conditions = Column(Text)  # Conditional requirements (e.g., "only for students without Core Negotiations")
     source_type = Column(String)  # syllabus, email, manual
     source_file = Column(String)  # path or reference to original document
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -246,20 +246,33 @@ def extract_with_crew_ai(
                 "3. For each schedule block:\n"
                 "   - Include all lines that clearly belong to that date's session (week label, date, topic, readings, notes).\n"
                 "   - Ignore purely decorative headers/footers and column labels like 'Day / Instructor / Topic'.\n"
-                "4. Also group non-schedule content that might be relevant later (e.g., 'Assessment & Grading', "
+                "   - FORWARD-LOOKING REFERENCES: When text mentions 'by class #3', 'prior to 6th class', 'before next session', "
+                "do NOT group it with the current block. Note it separately or skip it for now.\n"
+                "4. Create a 'session_dates' array mapping session/class numbers to their calendar dates:\n"
+                "   - Extract session numbers from text like 'Class 1', 'Session 2', 'Week 3', etc.\n"
+                "   - Map each session number to its corresponding date_string.\n"
+                "   - This helps later agents resolve forward references like 'due by class #3'.\n"
+                "5. Also group non-schedule content that might be relevant later (e.g., 'Assessment & Grading', "
                 "'Exams', 'Policies') into non_schedule_blocks.\n"
-                "5. Do NOT interpret the meaning of the content or extract deadlines/readings; your job is only "
+                "6. Do NOT interpret the meaning of the content or extract deadlines/readings; your job is only "
                 "to segment and group text into blocks.\n"
-                "6. Do NOT invent dates. Only use date strings that appear in {date_candidates} or in the text.\n\n"
+                "7. Do NOT invent dates. Only use date strings that appear in {date_candidates} or in the text.\n\n"
                 "OUTPUT FORMAT:\n"
                 "Return a single JSON object with:\n"
                 "{\n"
                 "  \"schedule_blocks\": [\n"
                 "    {\n"
                 "      \"date_string\": \"<canonical date string>\",\n"
+                "      \"session_number\": <optional int, e.g., 1, 2, 3 if mentioned in text>,\n"
                 "      \"line_indices\": [list of ints],\n"
                 "      \"raw_block\": \"concatenated raw text for this block\"\n"
                 "    },\n"
+                "    ...\n"
+                "  ],\n"
+                "  \"session_dates\": [\n"
+                "    {\"session_number\": 1, \"date\": \"Oct 22\"},\n"
+                "    {\"session_number\": 2, \"date\": \"Oct 29\"},\n"
+                "    {\"session_number\": 3, \"date\": \"Nov 5\"},\n"
                 "    ...\n"
                 "  ],\n"
                 "  \"non_schedule_blocks\": [\n"
@@ -273,7 +286,7 @@ def extract_with_crew_ai(
                 "}\n"
             ),
             expected_output=(
-                "A single JSON object with the keys 'schedule_blocks' and 'non_schedule_blocks', "
+                "A single JSON object with the keys 'schedule_blocks', 'session_dates', and 'non_schedule_blocks', "
                 "as described in the instructions."
             ),
             agent=segmentation_agent,
@@ -304,6 +317,11 @@ def extract_with_crew_ai(
             seg_data = json.loads(m.group(0))
         
         schedule_blocks = seg_data.get("schedule_blocks", [])
+        session_dates = seg_data.get("session_dates", [])
+        
+        # DEBUG: Log session dates mapping
+        print(f"\n🔍 DEBUG Agent 1 - Extracted {len(schedule_blocks)} schedule blocks")
+        print(f"   Session dates mapping: {json.dumps(session_dates, indent=2)}")
         
         if not schedule_blocks:
             return {"success": False, "error": "No schedule blocks found", "items_with_workload": []}
@@ -315,6 +333,7 @@ def extract_with_crew_ai(
                 "INPUTS YOU RECEIVE:\n"
                 "- One schedule block: {block_text}\n"
                 "- Date string for this block: {date_string}\n"
+                "- Session dates mapping: {session_dates} (maps session numbers to calendar dates)\n"
                 "- Graded assessment components: {assessment_components}\n\n"
                 "YOUR GOAL FOR THIS SINGLE BLOCK:\n"
                 "1. Read the block and identify:\n"
@@ -325,24 +344,108 @@ def extract_with_crew_ai(
                 "2. Date extraction rules:\n"
                 "   - FIRST PRIORITY: Look for explicit calendar dates (e.g., 'March 15', '3/15/2024', 'Oct 22').\n"
                 "   - SECOND PRIORITY: If only relative dates exist (e.g., 'Week 1', 'Session 2'), use the date_string provided for this block.\n"
+                "   - THIRD PRIORITY: Use {session_dates} mapping for forward references (see next section).\n"
                 "   - PRESERVE exact date format from the syllabus - do NOT convert or reformat dates.\n"
-                "   - Do NOT invent dates that don't appear in the text.\n"
+                "   - Do NOT invent dates that don't appear in the text or session_dates.\n"
+                "\n"
+                "3. FORWARD-LOOKING DATE RESOLUTION:\n"
+                "   When text contains forward references to future classes/sessions, resolve them using {session_dates}:\n"
+                "   \n"
+                "   **Recognition Keywords**: Look for phrases indicating future dates:\n"
+                "   - 'by class #X' / 'by session X' / 'by week X'\n"
+                "   - 'prior to [Xth] class' / 'before [Xth] session'\n"
+                "   - 'next class' / 'next session' / 'following week'\n"
+                "   - 'due [date]' / 'submit by [date]'\n"
+                "   - 'prepare for class X' / 'read for session X'\n"
+                "   \n"
+                "   **Resolution Strategy**:\n"
+                "   - If text says 'by class #3' or 'by session 3': Look up session_number=3 in {session_dates}, use that date\n"
+                "   - If text says 'prior to next class': Find the NEXT session after current block, use that date\n"
+                "   - If text says 'before 6th class': Look up session_number=6 in {session_dates}, use that date\n"
+                "   - If text says 'get started on X, due [date]': Create ONE deadline with the DUE date ONLY (ignore 'get started')\n"
+                "   - If text says 'watch video for next week': Use the NEXT session's date from {session_dates}\n"
+                "   \n"
+                "   **CRITICAL RULES**:\n"
+                "   - Do NOT use the current block's date_string for forward-looking tasks\n"
+                "   - Always resolve session numbers using {session_dates} mapping\n"
+                "   - If session number not in {session_dates}, skip that task (don't guess)\n"
+                "   - Create only ONE task per deadline (don't create duplicates for 'start' and 'due' dates)\n"
+                "   \n"
+                "   **Examples**:\n"
+                "   \n"
+                "   Example 1: Forward reference by class number\n"
+                "   - Current block: date_string='Oct 22', session_number=1\n"
+                "   - Text: 'Read first 3 chapters by class #3'\n"
+                "   - session_dates shows: [{\"session_number\": 3, \"date\": \"Nov 5\"}, ...]\n"
+                "   - Resolution: Look up session 3 → Nov 5\n"
+                "   - Output: Create reading task with date='Nov 5' (NOT 'Oct 22')\n"
+                "   \n"
+                "   Example 2: Forward reference to next session\n"
+                "   - Current block: date_string='Nov 19', session_number=5\n"
+                "   - Text: 'Prior to next (6th) class, watch Shapley-Pie video'\n"
+                "   - session_dates shows: [{\"session_number\": 6, \"date\": \"Dec 3\"}, ...]\n"
+                "   - Resolution: Look up session 6 → Dec 3\n"
+                "   - Output: Create reading task with date='Dec 3' (NOT 'Nov 19')\n"
+                "   \n"
+                "   Example 3: Multiple forward references in one block\n"
+                "   - Current block: date_string='Oct 22', session_number=1\n"
+                "   - Text: 'Read Chapter 1 for today. Read Chapters 2-3 by class #3. Read Chapter 4 by class #5.'\n"
+                "   - Resolution:\n"
+                "     * 'Read Chapter 1 for today' → date='Oct 22' (current session)\n"
+                "     * 'Read Chapters 2-3 by class #3' → session_dates[3]='Nov 5' → date='Nov 5'\n"
+                "     * 'Read Chapter 4 by class #5' → session_dates[5]='Nov 19' → date='Nov 19'\n"
+                "   - Output: Create 3 separate reading tasks with different dates\n"
+                "   \n"
+                "   Example 4: Assignment with start and due dates\n"
+                "   - Current block: date_string='Nov 12', session_number=4\n"
+                "   - Text: 'Get started on final paper (due Dec 15)'\n"
+                "   - Resolution: Only use the DUE date 'Dec 15', ignore 'get started'\n"
+                "   - Output: Create ONE assignment task with date='Dec 15' (NOT two tasks for Nov 12 and Dec 15)\n"
+                "\n"
                 "3. If the block mentions a graded assessment component (by name or close variant), link it "
-                "via 'assessment_name' in the corresponding hard_deadline.\n\n"
+                "via 'assessment_name' in the corresponding hard_deadline.\n"
+                "4. DETAILED DESCRIPTION REQUIREMENTS:\n"
+                "   - ALWAYS include page numbers for readings when specified (e.g., 'pp. 15-82', 'pages 83-102', 'Chapter 3 pp. 45-67').\n"
+                "   - ALWAYS include point values when mentioned (e.g., 'Worth 10 pts', '15 points', '50 pts').\n"
+                "   - ALWAYS include word count requirements when specified (e.g., '100-200 words', '500 word reflection').\n"
+                "   - ALWAYS include length requirements (e.g., '3-4 pages', '10 minute presentation').\n"
+                "   - ALWAYS capture specific deliverable requirements (e.g., 'video response', 'written analysis', 'group presentation').\n"
+                "   - Extract ALL specific details from the text - descriptions can be up to 300 characters.\n"
+                "5. ASSESSMENT COMPONENT WEIGHT ENRICHMENT:\n"
+                "   - When matching a hard_deadline to an assessment_component, check the component's weight/points.\n"
+                "   - If the component has a weight, include it at the START of the description in format: '[Weight: X pts]' or '[Weight: X%]'\n"
+                "   - Example: '[Weight: 50 pts] 3-4 page write-up with planning document. Due Dec 15th.'\n"
+                "   - This helps students prioritize tasks based on their grade impact.\n\n"
                 "OUTPUT FORMAT:\n"
                 "Return a JSON ARRAY. Each element has:\n"
                 "{\n"
                 "  \"kind\": \"class_session\" | \"hard_deadline\" | \"ignore\",\n"
                 "  \"date_string\": \"<one of the allowed date strings>\",\n"
                 "  \"session_title\": \"optional, for class_session\",\n"
-                "  \"prep_tasks\": [ {\"title\": \"...\", \"type\": \"reading_preparatory\" | \"reading_optional\" | \"reading_mandatory\"} ],\n"
-                "  \"mandatory_tasks\": [ {\"title\": \"...\", \"type\": \"reading_mandatory\" | \"reading_optional\"} ],\n"
+                "  \"prep_tasks\": [ {\"title\": \"...\", \"type\": \"reading_preparatory\" | \"reading_optional\" | \"reading_mandatory\", \"description\": \"optional, include page numbers if specified\"} ],\n"
+                "  \"mandatory_tasks\": [ {\"title\": \"...\", \"type\": \"reading_mandatory\" | \"reading_optional\", \"description\": \"optional, include page numbers if specified\"} ],\n"
                 "  \"hard_deadlines\": [\n"
                 "    {\n"
                 "      \"title\": \"...\",\n"
                 "      \"type\": \"assignment\" | \"exam\" | \"project\" | \"assessment\" | \"administrative\",\n"
-                "      \"description\": \"short description (max 120 chars)\",\n"
+                "      \"description\": \"detailed description (max 300 chars, include page numbers, point values, word counts, all specific requirements)\",\n"
                 "      \"assessment_name\": \"optional, name from assessment_components if matched\"\n"
+                "    }\n"
+                "  ]\n"
+                "}\n\n"
+                "EXAMPLE WITH ASSESSMENT COMPONENT LINKING:\n"
+                "If assessment_components includes: {\"name\": \"Real World Negotiation\", \"weight\": \"50 pts\"}\n"
+                "And the block mentions: 'Real World Negotiation Paper due Dec 15 - 3-4 page write-up'\n"
+                "Then extract:\n"
+                "{\n"
+                "  \"kind\": \"hard_deadline\",\n"
+                "  \"date_string\": \"Dec 15\",\n"
+                "  \"hard_deadlines\": [\n"
+                "    {\n"
+                "      \"title\": \"Real World Negotiation Paper\",\n"
+                "      \"type\": \"assignment\",\n"
+                "      \"description\": \"[Weight: 50 pts] 3-4 page write-up with planning document\",\n"
+                "      \"assessment_name\": \"Real World Negotiation\"\n"
                 "    }\n"
                 "  ]\n"
                 "}\n"
@@ -366,6 +469,7 @@ def extract_with_crew_ai(
             block_inputs = {
                 "block_text": block.get("raw_block", ""),
                 "date_string": block.get("date_string", ""),
+                "session_dates": json.dumps(session_dates, indent=2),
                 "assessment_components": json.dumps(assessment_components or [], indent=2),
             }
             
@@ -388,7 +492,7 @@ def extract_with_crew_ai(
         if not all_items:
             return {"success": False, "error": "No items extracted", "items_with_workload": []}
         
-        # Flatten nested structure: extract hard_deadlines from schedule blocks
+        # Flatten nested structure: extract hard_deadlines AND readings from schedule blocks
         flattened_items = []
         for item in all_items:
             if item.get("kind") == "hard_deadline":
@@ -406,6 +510,42 @@ def extract_with_crew_ai(
                 date_str = item.get("date_string", "")
                 session_title = item.get("session_title", "")
                 
+                # Extract preparatory readings (readings to do before class)
+                for task in item.get("prep_tasks", []) or []:
+                    task_title = (task.get("title") or "").strip()
+                    if not task_title:
+                        continue
+                    # Use task description if provided, otherwise create default
+                    task_desc = task.get("description", "").strip()
+                    if not task_desc:
+                        task_desc = f"Preparatory reading for {session_title}" if session_title else "Preparatory reading"
+                    flattened_items.append({
+                        "date": date_str,
+                        "title": task_title,
+                        "type": "reading",
+                        "description": task_desc,
+                        "assessment_name": "",
+                        "reading_type": task.get("type", "reading_preparatory"),
+                    })
+                
+                # Extract mandatory/optional readings
+                for task in item.get("mandatory_tasks", []) or []:
+                    task_title = (task.get("title") or "").strip()
+                    if not task_title:
+                        continue
+                    # Use task description if provided, otherwise create default
+                    task_desc = task.get("description", "").strip()
+                    if not task_desc:
+                        task_desc = f"Mandatory reading for {session_title}" if session_title else "Mandatory reading"
+                    flattened_items.append({
+                        "date": date_str,
+                        "title": task_title,
+                        "type": "reading",
+                        "description": task_desc,
+                        "assessment_name": "",
+                        "reading_type": task.get("type", "reading_mandatory"),
+                    })
+                
                 # Add hard deadlines within class session
                 for deadline in item.get("hard_deadlines", []):
                     flattened_items.append({
@@ -420,10 +560,34 @@ def extract_with_crew_ai(
         if flattened_items:
             print(f"   Sample flattened item: {json.dumps(flattened_items[0], indent=2)}")
         
-        all_items = flattened_items
+        # Step 2: Deduplicate items by (date, type, title) to prevent duplicate deadlines
+        unique_items = []
+        seen = set()
+        for item in flattened_items:
+            key = (item.get("date"), item.get("type"), item.get("title"))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_items.append(item)
+        
+        print(f"\n🔍 DEBUG Deduplication - {len(unique_items)} unique items (removed {len(flattened_items) - len(unique_items)} duplicates)")
+        
+        all_items = unique_items
         
         if not all_items:
             return {"success": False, "error": "No deadlines found after flattening", "items_with_workload": []}
+        
+        # Step 3: Filter generic assessment components to prevent Agent 3 from creating fake deadlines
+        filtered_assessment_components = []
+        generic_keywords = ["participation", "attendance", "class participation", "engagement", "general"]
+        for component in (assessment_components or []):
+            component_name = (component.get("name") or "").lower()
+            # Skip generic components that don't have specific dated deadlines
+            if any(keyword in component_name for keyword in generic_keywords):
+                continue
+            filtered_assessment_components.append(component)
+        
+        print(f"\n🔍 DEBUG Component Filtering - {len(filtered_assessment_components)} specific components (filtered {len(assessment_components or []) - len(filtered_assessment_components)} generic ones)")
         
         # Step 4: Agent 3 - QA
         qa_task = Task(
@@ -435,13 +599,18 @@ def extract_with_crew_ai(
                 "- Preliminary mapping between components and tasks: {preliminary_mapping}\n"
                 "- Raw text of non-schedule sections: {non_schedule_text}\n\n"
                 "YOUR GOAL:\n"
-                "1. Check coverage: For each assessment component, is there at least one corresponding 'hard_deadline'?\n"
-                "2. Identify missing assessments: components that appear in grading but have no dated hard_deadline.\n"
+                "1. Check coverage: For each SPECIFIC assessment component (exams, papers, projects with due dates), "
+                "verify there is a corresponding 'hard_deadline'. IGNORE general/ongoing components like 'Participation' or 'Attendance'.\n"
+                "2. Identify missing assessments: SPECIFIC components that appear in grading but have no dated hard_deadline.\n"
                 "3. Detect duplicates or conflicts: the same exam/assignment with multiple dates, etc.\n"
                 "4. Identify unmatched deadlines: hard_deadlines that do not clearly map to any graded component.\n"
                 "5. Perform global sanity checks (e.g., a 40% Final Exam that never appears in the schedule).\n"
-                "6. Optionally adjust obvious misclassifications (e.g., 'Final Exam' marked as 'assignment' instead of 'exam'), "
-                "but do NOT invent new assessments or dates.\n\n"
+                "6. Optionally adjust obvious misclassifications (e.g., 'Final Exam' marked as 'assignment' instead of 'exam').\n\n"
+                "CRITICAL CONSTRAINTS:\n"
+                "- Do NOT create new deadline items for assessment components that lack specific dates in the schedule.\n"
+                "- Do NOT invent dates or create generic deadlines (e.g., 'Class Participation' without a specific date).\n"
+                "- Only report missing assessments - do NOT add them to validated_items.\n"
+                "- Remove true duplicates from validated_items but preserve all legitimate deadline items.\n\n"
                 "OUTPUT FORMAT:\n"
                 "Return a single JSON object:\n"
                 "{\n"
@@ -469,7 +638,7 @@ def extract_with_crew_ai(
         
         qa_inputs = {
             "merged_tasks": json.dumps(all_items, indent=2),
-            "assessment_components": json.dumps(assessment_components or [], indent=2),
+            "assessment_components": json.dumps(filtered_assessment_components, indent=2),
             "preliminary_mapping": json.dumps({}, indent=2),
             "non_schedule_text": "",
         }
@@ -490,7 +659,20 @@ def extract_with_crew_ai(
             print(f"   Sample from Agent 3: {json.dumps(validated_items[0], indent=2)}")
             print(f"   Agent 3 keys: {list(validated_items[0].keys())}")
         
-        # Step 5: Agent 4 - Workload Estimation
+        # Step 5: Second deduplication pass after Agent 3 (in case QA created duplicates)
+        deduplicated_items = []
+        seen_after_qa = set()
+        for item in validated_items:
+            key = (item.get("date"), item.get("type"), item.get("title"))
+            if key in seen_after_qa:
+                continue
+            seen_after_qa.add(key)
+            deduplicated_items.append(item)
+        
+        print(f"\n🔍 DEBUG Post-QA Deduplication - {len(deduplicated_items)} unique items (removed {len(validated_items) - len(deduplicated_items)} duplicates)")
+        validated_items = deduplicated_items
+        
+        # Step 6: Agent 4 - Workload Estimation
         workload_task = Task(
             description=(
                 "You are the Academic Workload Estimation Agent.\n\n"
@@ -558,21 +740,44 @@ def extract_with_crew_ai(
             "full_text": text[:3000],
         }
         
+        # DEBUG: Log Agent 4 input
+        print(f"\n🔍 DEBUG Agent 4 Input - {len(validated_items)} items to estimate")
+        if validated_items:
+            print(f"   Input keys: {list(validated_items[0].keys())}")
+        
         workload_result = workload_crew.kickoff(inputs=workload_inputs)
         workload_str = workload_result.raw if hasattr(workload_result, 'raw') else str(workload_result)
+        
+        # DEBUG: Log Agent 4 raw output
+        print(f"\n🔍 DEBUG Agent 4 Raw Output (first 500 chars): {workload_str[:500]}")
         
         try:
             items_with_workload = json.loads(workload_str.strip())
             if not isinstance(items_with_workload, list):
+                print(f"   ⚠️ WARNING: Agent 4 returned non-list type: {type(items_with_workload)}")
                 items_with_workload = validated_items
-        except:
+        except Exception as e:
+            print(f"   ⚠️ WARNING: Agent 4 JSON parsing failed: {str(e)}")
             items_with_workload = validated_items
         
-        # DEBUG: Log Agent 4 output
-        print(f"\n🔍 DEBUG Agent 4 - Items with workload: {len(items_with_workload)}")
+        # DEBUG: Log Agent 4 output and validate workload fields were added
+        print(f"\n🔍 DEBUG Agent 4 Output - {len(items_with_workload)} items")
         if items_with_workload:
             print(f"   Sample from Agent 4: {json.dumps(items_with_workload[0], indent=2)}")
             print(f"   Agent 4 keys: {list(items_with_workload[0].keys())}")
+            
+            # Validate that workload fields were actually added
+            sample_item = items_with_workload[0]
+            has_estimated_hours = "estimated_hours" in sample_item
+            has_workload_breakdown = "workload_breakdown" in sample_item
+            has_confidence = "confidence" in sample_item
+            has_notes = "notes" in sample_item
+            
+            print(f"   ✓ Workload fields present: estimated_hours={has_estimated_hours}, "
+                  f"workload_breakdown={has_workload_breakdown}, confidence={has_confidence}, notes={has_notes}")
+            
+            if not (has_estimated_hours or has_workload_breakdown):
+                print(f"   ⚠️ CRITICAL: Agent 4 did NOT add workload fields! Falling back to defaults.")
         
         # Ensure all items have valid estimated_hours (handle None values)
         for item in items_with_workload:

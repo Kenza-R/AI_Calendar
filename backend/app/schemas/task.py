@@ -10,6 +10,8 @@ class TaskBase(BaseModel):
     priority: Optional[str] = "medium"
     task_type: Optional[str] = None
     estimated_hours: Optional[int] = None
+    is_optional: Optional[bool] = False
+    conditions: Optional[str] = None
 
 
 class TaskCreate(TaskBase):
@@ -24,6 +26,8 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     task_type: Optional[str] = None
     estimated_hours: Optional[int] = None
+    is_optional: Optional[bool] = None
+    conditions: Optional[str] = None
 
 
 class TaskResponse(TaskBase):
@@ -33,6 +37,8 @@ class TaskResponse(TaskBase):
     completed: bool
     prep_material: Optional[str] = None
     source_type: Optional[str] = None
+    is_optional: bool
+    conditions: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

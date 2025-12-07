@@ -377,6 +377,10 @@ async def upload_syllabus_crewai(
             if workload_breakdown:
                 task_description += f"\n\n⏱️ Workload: {workload_breakdown}"
             
+            # Extract optional/conditional information
+            is_optional = item.get("is_optional", False)
+            conditions = item.get("conditions", "")
+            
             new_task = Task(
                 user_id=current_user.id,
                 event_id=new_event.id,
@@ -386,6 +390,8 @@ async def upload_syllabus_crewai(
                 priority="high" if item_type in ["exam", "quiz"] else "medium",
                 task_type=item_type,
                 estimated_hours=estimated_hours,
+                is_optional=is_optional,
+                conditions=conditions,
                 source_type="syllabus_crewai",
                 source_file=file.filename
             )

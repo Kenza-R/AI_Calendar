@@ -9,7 +9,9 @@ const TaskModal = ({ task, onClose, onSave }) => {
     deadline: '',
     priority: 'medium',
     task_type: 'assignment',
-    estimated_hours: 5
+    estimated_hours: 5,
+    is_optional: false,
+    conditions: ''
   });
   const [loading, setLoading] = useState(false);
   const [prepMaterial, setPrepMaterial] = useState(null);
@@ -23,7 +25,9 @@ const TaskModal = ({ task, onClose, onSave }) => {
         deadline: task.deadline?.slice(0, 16) || '',
         priority: task.priority || 'medium',
         task_type: task.task_type || 'assignment',
-        estimated_hours: task.estimated_hours || 5
+        estimated_hours: task.estimated_hours || 5,
+        is_optional: task.is_optional || false,
+        conditions: task.conditions || ''
       });
       
       if (task.prep_material) {
@@ -202,6 +206,33 @@ const TaskModal = ({ task, onClose, onSave }) => {
               disabled={loading}
             />
           </div>
+
+          <div className="form-group checkbox-group">
+            <label>
+              <input
+                type="checkbox"
+                name="is_optional"
+                checked={formData.is_optional}
+                onChange={(e) => setFormData({ ...formData, is_optional: e.target.checked })}
+                disabled={loading}
+              />
+              <span>This is an optional task</span>
+            </label>
+          </div>
+
+          {formData.is_optional && (
+            <div className="form-group">
+              <label>Conditions (When does this apply?)</label>
+              <textarea
+                name="conditions"
+                value={formData.conditions}
+                onChange={handleChange}
+                rows={2}
+                placeholder="e.g., Only for students without Core Negotiations background"
+                disabled={loading}
+              />
+            </div>
+          )}
 
           <div className="modal-actions">
             <button type="submit" className="btn-primary" disabled={loading}>

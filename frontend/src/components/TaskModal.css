@@ -130,3 +130,28 @@
   margin-bottom: 8px;
   line-height: 1.5;
 }
+
+/* Checkbox group styling */
+.checkbox-group {
+  padding: 12px 0;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: normal;
+}
+
+.checkbox-group input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  cursor: pointer;
+  accent-color: #8b5cf6;
+}
+
+.checkbox-group span {
+  font-size: 0.95rem;
+  color: #333;
+}

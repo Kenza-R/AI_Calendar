@@ -148,15 +148,25 @@ const TasksList = () => {
                     className="task-checkbox"
                   />
                   <div className="task-title-section">
-                    <h3 onClick={() => handleTaskClick(task)}>
+                    <h3 onClick={() => handleTaskClick(task)} className={task.is_optional ? 'optional-task' : ''}>
                       {getTaskTypeIcon(task.task_type)} {task.title}
                     </h3>
-                    <span
-                      className="priority-badge"
-                      style={{ backgroundColor: getPriorityColor(task.priority) }}
-                    >
-                      {task.priority}
-                    </span>
+                    <div className="task-badges">
+                      <span
+                        className="priority-badge"
+                        style={{ backgroundColor: getPriorityColor(task.priority) }}
+                      >
+                        {task.priority}
+                      </span>
+                      {task.is_optional && (
+                        <span 
+                          className="optional-badge"
+                          title={task.conditions || "Optional task"}
+                        >
+                          Optional
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="task-actions">
                     <button
@@ -192,6 +202,12 @@ const TasksList = () => {
                     </span>
                   )}
                 </div>
+
+                {task.conditions && (
+                  <div className="task-conditions">
+                    ℹ️ {task.conditions}
+                  </div>
+                )}
 
                 {task.prep_material && (
                   <div className="task-prep-indicator">
