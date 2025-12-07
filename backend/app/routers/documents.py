@@ -159,6 +159,35 @@ async def upload_syllabus_crewai(
         # Read file content
         file_content = await file.read()
         
+        # Extract semester metadata for relative date parsing
+        def extract_semester_info(text: str) -> Optional[datetime]:
+            """Try to extract semester start date from syllabus."""
+            import re
+            
+            # Look for patterns like "Spring 2024", "Fall 2023", "January 15, 2024"
+            semester_patterns = [
+                r'Spring\s+(\d{4})',
+                r'Fall\s+(\d{4})',
+                r'Winter\s+(\d{4})',
+                r'Summer\s+(\d{4})',
+            ]
+            
+            for pattern in semester_patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    year = int(match.group(1))
+                    semester = match.group(0).lower()
+                    if 'spring' in semester:
+                        return datetime(year, 1, 15)
+                    elif 'summer' in semester:
+                        return datetime(year, 6, 1)
+                    elif 'fall' in semester:
+                        return datetime(year, 9, 1)
+                    elif 'winter' in semester:
+                        return datetime(year, 1, 5)
+            
+            return None
+        
         # Run CrewAI extraction
         extraction_result = extract_deadlines_and_tasks(file_content, file.filename)
         
@@ -170,12 +199,61 @@ async def upload_syllabus_crewai(
         
         items_with_workload = extraction_result.get("items_with_workload", [])
         
-        # Debug: Print first few items to see the date format
-        print(f"📊 CrewAI extracted {len(items_with_workload)} items")
+        # Extract semester info for date parsing
+        if file_extension == ".pdf":
+            from app.utils.pdf_parser import parse_pdf
+            text = parse_pdf(file_content)
+        else:
+            text = file_content.decode('utf-8')
+        
+        semester_start = extract_semester_info(text[:2000])  # Check first 2000 chars
+        
+        # DEBUG: See exact agent output format
+        print(f"\n{'='*60}")
+        print(f"📊 CrewAI EXTRACTION RESULTS")
+        print(f"{'='*60}")
+        print(f"Total items extracted: {len(items_with_workload)}")
+        print(f"Total estimated hours: {extraction_result.get('total_estimated_hours', 0)}h")
+        print(f"Extraction success: {extraction_result.get('success')}")
+        
         if items_with_workload:
-            print(f"📋 Sample item: {items_with_workload[0]}")
+            print(f"\n📋 FIRST 3 ITEMS (showing date format):")
+            for i, item in enumerate(items_with_workload[:3], 1):
+                print(f"\n  Item {i}:")
+                print(f"    Title: {item.get('title', 'NO TITLE')}")
+                print(f"    Date: '{item.get('date', 'NO DATE')}'")
+                print(f"    Type: {item.get('type', 'NO TYPE')}")
+                print(f"    Hours: {item.get('estimated_hours', 'NO HOURS')}")
+                print(f"    Breakdown: {item.get('workload_breakdown', 'NO BREAKDOWN')[:50]}...")
+        else:
+            print(f"⚠️  NO ITEMS RETURNED BY AGENTS!")
+        print(f"{'='*60}\n")
         
         # Helper function to parse dates
+        def parse_relative_date(date_str: str, semester_start: Optional[datetime] = None) -> Optional[datetime]:
+            """Parse relative dates like 'Week 1', 'Week 2' to actual dates."""
+            import re
+            
+            if not semester_start:
+                # Default to current date if no semester start provided
+                semester_start = datetime.now()
+            
+            # Match "Week N" pattern
+            week_match = re.search(r'Week\s+(\d+)', date_str, re.IGNORECASE)
+            if week_match:
+                week_num = int(week_match.group(1))
+                # Calculate date: semester_start + (week_num - 1) * 7 days
+                return semester_start + timedelta(days=(week_num - 1) * 7)
+            
+            # Match "Session N" pattern
+            session_match = re.search(r'Session\s+(\d+)', date_str, re.IGNORECASE)
+            if session_match:
+                session_num = int(session_match.group(1))
+                # Assume sessions are weekly
+                return semester_start + timedelta(days=(session_num - 1) * 7)
+            
+            return None
+        
         def parse_date_string(date_str: str) -> Optional[datetime]:
             """Parse various date formats to datetime."""
             if not date_str:
@@ -231,6 +309,12 @@ async def upload_syllabus_crewai(
                 except:
                     pass
             
+            # Try parsing relative dates (Week 1, Session 2, etc.)
+            # Use extracted semester start or estimate based on current date
+            relative_date = parse_relative_date(date_str, semester_start)
+            if relative_date:
+                return relative_date
+            
             return None
         
         # Parse document text for database
@@ -239,26 +323,35 @@ async def upload_syllabus_crewai(
         else:
             text_content = parse_text_document(file_content, file_extension)
         
+        # Filter out class sessions BEFORE processing
+        deadline_items = [
+            item for item in items_with_workload 
+            if item.get("type") != "class_session"
+        ]
+        
+        print(f"📊 After filtering class sessions: {len(deadline_items)} deadline items to process\n")
+        
         # Create tasks and events from extracted items
         created_tasks = []
         created_events = []
         skipped_items = []
         
-        for item in items_with_workload:
+        for idx, item in enumerate(deadline_items, 1):
             item_type = item.get("type", "deadline")
             
-            # Skip class sessions (not deadlines)
-            if item_type == "class_session":
-                continue
-            
-            # Parse date
+            # Parse date with detailed logging
             date_str = item.get("date", "")
+            print(f"\n🔍 Processing item {idx}/{len(deadline_items)}: {item.get('title', 'Unknown')}")
+            print(f"   Raw date string: '{date_str}'")
+            
             deadline_date = parse_date_string(date_str)
             
             if not deadline_date:
                 skipped_items.append({"item": item.get("title", "Unknown"), "date": date_str})
-                print(f"⚠️ Skipped item - could not parse date: '{date_str}' for task: {item.get('title', 'Unknown')}")
+                print(f"   ❌ SKIPPED - Could not parse date: '{date_str}'")
                 continue
+            
+            print(f"   ✅ Parsed successfully: {deadline_date}")
             
             # Create calendar event
             event_start = deadline_date.replace(hour=23, minute=59, second=0, microsecond=0)
@@ -323,6 +416,19 @@ async def upload_syllabus_crewai(
         
         db.commit()
         
+        # Final summary
+        print(f"\n{'='*60}")
+        print(f"📊 FINAL RESULTS")
+        print(f"{'='*60}")
+        print(f"✅ Tasks created: {len(created_tasks)}")
+        print(f"✅ Events created: {len(created_events)}")
+        print(f"⚠️  Items skipped: {len(skipped_items)}")
+        if skipped_items:
+            print(f"\nSkipped items details:")
+            for skip in skipped_items[:5]:  # Show first 5
+                print(f"  - {skip['item']}: date='{skip['date']}'")
+        print(f"{'='*60}\n")
+        
         return {
             "message": f"Successfully processed {file.filename} with CrewAI pipeline",
             "document_id": document.id,
@@ -331,6 +437,7 @@ async def upload_syllabus_crewai(
             "total_estimated_hours": extraction_result.get("total_estimated_hours", 0),
             "tasks": created_tasks,
             "events": created_events,
+            "skipped_items": skipped_items,
             "qa_summary": extraction_result.get("qa_report", {}).get("summary", ""),
         }
     
