@@ -4,13 +4,26 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Virtual Environments
 venv/
 env/
 ENV/
+.venv/
 .venv312/
+backend/venv/
+
+# Database files
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+
+# Uploads
+backend/uploads/
+uploads/
 
 # Node
 node_modules/
