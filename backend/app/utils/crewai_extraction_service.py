@@ -244,10 +244,10 @@ def extract_with_crew_ai(
                 "2. Group consecutive lines into coherent schedule blocks, where each block corresponds to "
                 "a single primary date_string.\n"
                 "3. For each schedule block:\n"
-                "   - Include all lines that clearly belong to that date's session (week label, date, topic, readings, notes).\n"
+                "   - Include ALL lines that belong to that date's session (week label, date, topic, readings, assignments, notes).\n"
+                "   - Include forward-looking references like 'by class #3', 'prior to next class', 'due in 2 weeks' - these belong to the session where they appear.\n"
                 "   - Ignore purely decorative headers/footers and column labels like 'Day / Instructor / Topic'.\n"
-                "   - FORWARD-LOOKING REFERENCES: When text mentions 'by class #3', 'prior to 6th class', 'before next session', "
-                "do NOT group it with the current block. Note it separately or skip it for now.\n"
+                "   - The extraction agent (Agent 2) will handle resolving forward references to actual dates.\n"
                 "4. Create a 'session_dates' array mapping session/class numbers to their calendar dates:\n"
                 "   - Extract session numbers from text like 'Class 1', 'Session 2', 'Week 3', etc.\n"
                 "   - Map each session number to its corresponding date_string.\n"
@@ -317,11 +317,46 @@ def extract_with_crew_ai(
             seg_data = json.loads(m.group(0))
         
         schedule_blocks = seg_data.get("schedule_blocks", [])
-        session_dates = seg_data.get("session_dates", [])
+        session_dates_raw = seg_data.get("session_dates", [])
         
-        # DEBUG: Log session dates mapping
+        # ============================================================================
+        # PHASE 6 TASK 6.1: BUILD SESSION DATE MAPPING
+        # Addresses Issues #1, #4, #12 (Foundation for forward reference resolution)
+        # ============================================================================
+        
+        # Strategy 1: Use Agent 1's explicit session_dates mapping
+        session_dates_map = {}
+        for session_info in session_dates_raw:
+            sess_num = session_info.get("session_number")
+            date = session_info.get("date")
+            if sess_num and date:
+                session_dates_map[sess_num] = date
+        
+        # Strategy 2: Fallback - infer from schedule_blocks if Agent 1 didn't provide complete mapping
+        # This handles cases where Agent 1 misses some session numbers
+        for idx, block in enumerate(schedule_blocks):
+            session_num = block.get("session_number")
+            date_str = block.get("date_string", "")
+            
+            # Use explicit session_number if provided by Agent 1
+            if session_num and date_str:
+                if session_num not in session_dates_map:
+                    session_dates_map[session_num] = date_str
+            # Fallback: assume sequential numbering (session 1, 2, 3, ...)
+            elif date_str:
+                inferred_session_num = idx + 1
+                if inferred_session_num not in session_dates_map:
+                    session_dates_map[inferred_session_num] = date_str
+        
+        # DEBUG: Log session dates mapping with coverage stats
         print(f"\n🔍 DEBUG Agent 1 - Extracted {len(schedule_blocks)} schedule blocks")
-        print(f"   Session dates mapping: {json.dumps(session_dates, indent=2)}")
+        print(f"   Session dates mapping: {len(session_dates_map)} sessions mapped")
+        if session_dates_map:
+            print(f"   🗓️  Session Date Map:")
+            for sess_num in sorted(session_dates_map.keys()):
+                print(f"      Session {sess_num} → {session_dates_map[sess_num]}")
+        else:
+            print(f"   ⚠️  WARNING: No session dates mapped - forward references may fail")
         
         if not schedule_blocks:
             return {"success": False, "error": "No schedule blocks found", "items_with_workload": []}
@@ -338,9 +373,18 @@ def extract_with_crew_ai(
                 "YOUR GOAL FOR THIS SINGLE BLOCK:\n"
                 "1. Read the block and identify:\n"
                 "   - Class session information (topic, title, week label, etc.).\n"
-                "   - Preparatory readings or 'read before class' items.\n"
+                "   - Preparatory readings or 'read before class' items (for THIS session only - do NOT include forward references here).\n"
                 "   - Mandatory or optional readings explicitly identified as readings.\n"
                 "   - Hard deadlines: anything clearly due, to be submitted, exam dates, quizzes, tests, projects, etc.\n"
+                "   \n"
+                "   ⚠️ **CRITICAL RULE FOR FORWARD REFERENCES**:\n"
+                "   - If text says 'by class #X', 'prior to Xth class', 'for next session', 'by session Y', etc.\n"
+                "   - Do NOT put these in prep_tasks, mandatory_tasks, or within the class_session item\n"
+                "   - Instead, create a SEPARATE item in your output array with kind='hard_deadline' and the RESOLVED date\n"
+                "   - Example: Block for Class 4 (Nov 12) says 'Prior to next (5th) class, watch videos'\n"
+                "     → Do NOT add to Class 4's prep_tasks\n"
+                "     → Instead, create separate hard_deadline item with date='Nov 19' (Class 5's date)\n"
+                "   \n"
                 "2. Date extraction rules:\n"
                 "   - FIRST PRIORITY: Look for explicit calendar dates (e.g., 'March 15', '3/15/2024', 'Oct 22').\n"
                 "   - SECOND PRIORITY: If only relative dates exist (e.g., 'Week 1', 'Session 2'), use the date_string provided for this block.\n"
@@ -381,20 +425,47 @@ def extract_with_crew_ai(
                 "   - Output: Create reading task with date='Nov 5' (NOT 'Oct 22')\n"
                 "   \n"
                 "   Example 2: Forward reference to next session\n"
-                "   - Current block: date_string='Nov 19', session_number=5\n"
-                "   - Text: 'Prior to next (6th) class, watch Shapley-Pie video'\n"
-                "   - session_dates shows: [{\"session_number\": 6, \"date\": \"Dec 3\"}, ...]\n"
-                "   - Resolution: Look up session 6 → Dec 3\n"
-                "   - Output: Create reading task with date='Dec 3' (NOT 'Nov 19')\n"
+                "   - Current block: date_string='Nov 12', session_number=4\n"
+                "   - Text: 'Topic: Multi-party negotiations. Prior to next (5th) class, watch strategy videos.'\n"
+                "   - session_dates shows: [{\"session_number\": 5, \"date\": \"Nov 19\"}, ...]\n"
+                "   - Resolution: 'Prior to next (5th) class' refers to session 5 → Look up session 5 → Nov 19\n"
+                "   - Output: Create TWO items in your array:\n"
+                "     1. The Class 4 session (Nov 12) with its topics\n"
+                "     2. A SEPARATE hard_deadline item with date='Nov 19' for the forward reference\n"
+                "   - JSON Output:\n"
+                "     [\n"
+                "       {\n"
+                "         \"kind\": \"class_session\",\n"
+                "         \"date_string\": \"Nov 12\",\n"
+                "         \"session_title\": \"Multi-party Negotiations\",\n"
+                "         \"prep_tasks\": [],\n"
+                "         \"mandatory_tasks\": [],\n"
+                "         \"hard_deadlines\": []\n"
+                "       },\n"
+                "       {\n"
+                "         \"kind\": \"hard_deadline\",\n"
+                "         \"date_string\": \"Nov 19\",\n"
+                "         \"hard_deadlines\": [{\n"
+                "           \"title\": \"Watch strategy videos\",\n"
+                "           \"type\": \"reading\",\n"
+                "           \"description\": \"Watch strategy videos prior to Class 5.\"\n"
+                "         }]\n"
+                "       }\n"
+                "     ]\n"
                 "   \n"
                 "   Example 3: Multiple forward references in one block\n"
                 "   - Current block: date_string='Oct 22', session_number=1\n"
                 "   - Text: 'Read Chapter 1 for today. Read Chapters 2-3 by class #3. Read Chapter 4 by class #5.'\n"
                 "   - Resolution:\n"
-                "     * 'Read Chapter 1 for today' → date='Oct 22' (current session)\n"
-                "     * 'Read Chapters 2-3 by class #3' → session_dates[3]='Nov 5' → date='Nov 5'\n"
-                "     * 'Read Chapter 4 by class #5' → session_dates[5]='Nov 19' → date='Nov 19'\n"
-                "   - Output: Create 3 separate reading tasks with different dates\n"
+                "     * 'Read Chapter 1 for today' → date='Oct 22' (current session) → in class_session's prep_tasks\n"
+                "     * 'Read Chapters 2-3 by class #3' → session_dates[3]='Nov 5' → SEPARATE hard_deadline with date='Nov 5'\n"
+                "     * 'Read Chapter 4 by class #5' → session_dates[5]='Nov 19' → SEPARATE hard_deadline with date='Nov 19'\n"
+                "   - Output: Create 3 items total: 1 class_session + 2 hard_deadline items with resolved dates\n"
+                "   \n"
+                "   **CRITICAL FORWARD REFERENCE RULE**:\n"
+                "   - When you see 'by class #X' or 'prior to Xth class', do NOT put it in prep_tasks/mandatory_tasks\n"
+                "   - Instead, create a SEPARATE item with kind='hard_deadline' using the RESOLVED date\n"
+                "   - Each forward reference becomes its own hard_deadline item with the correct future date\n"
                 "   \n"
                 "   Example 4: Assignment with start and due dates\n"
                 "   - Current block: date_string='Nov 12', session_number=4\n"
@@ -402,16 +473,225 @@ def extract_with_crew_ai(
                 "   - Resolution: Only use the DUE date 'Dec 15', ignore 'get started'\n"
                 "   - Output: Create ONE assignment task with date='Dec 15' (NOT two tasks for Nov 12 and Dec 15)\n"
                 "\n"
-                "3. If the block mentions a graded assessment component (by name or close variant), link it "
+                "4. DUPLICATE PREVENTION RULES:\n"
+                "   Assignments and tasks are often mentioned multiple times across blocks (introduction, reminders, due dates).\n"
+                "   Extract each task ONLY ONCE using the FINAL DUE DATE to prevent duplicate tasks.\n"
+                "   \n"
+                "   **Introduction/Reminder Keywords** (NOT deadlines - skip these mentions):\n"
+                "   - 'get started on X'\n"
+                "   - 'consider X'\n"
+                "   - 'begin working on X'\n"
+                "   - 'you should have completed X' (past tense - already due)\n"
+                "   - 'X was due yesterday'\n"
+                "   - 'make progress on X'\n"
+                "   - 'start thinking about X'\n"
+                "   \n"
+                "   **Deadline Keywords** (EXTRACT these - actual due dates):\n"
+                "   - 'due [date]'\n"
+                "   - 'submit by [date]'\n"
+                "   - 'turn in [date]'\n"
+                "   - 'deadline [date]'\n"
+                "   - 'hand in [date]'\n"
+                "   - 'submit on [date]'\n"
+                "   \n"
+                "   **Extraction Strategy**:\n"
+                "   - When processing a block, check if the task title sounds like an assignment you've seen before\n"
+                "   - If text only mentions 'get started' or 'begin working', mark it internally but DON'T extract yet\n"
+                "   - Only extract when you find the explicit DUE date with deadline keywords\n"
+                "   - If multiple blocks mention the same task with different dates, use the EARLIEST explicit due date\n"
+                "   - If you see 'should have completed X by yesterday', DO NOT extract (it's already past due from previous block)\n"
+                "   \n"
+                "   **Example: Sales-video task appears 3 times**\n"
+                "   \n"
+                "   Block 1 (Oct 29): 'After October 25th... get started on Sales-video task, due Noon, Tuesday, Nov 4th'\n"
+                "   → Extract: YES - has explicit due date 'Nov 4'\n"
+                "   \n"
+                "   Block 2 (Nov 4): [no mention of Sales-video]\n"
+                "   → Extract: NO - not mentioned\n"
+                "   \n"
+                "   Block 3 (Nov 5): 'You should have completed Sales-video task by yesterday noon'\n"
+                "   → Extract: NO - past tense reminder, already due in Block 1\n"
+                "   \n"
+                "   Result: Extract ONCE in Block 1 with date='Nov 4'\n"
+                "   {\n"
+                "     \"kind\": \"hard_deadline\",\n"
+                "     \"date_string\": \"Nov 4\",\n"
+                "     \"hard_deadlines\": [{\n"
+                "       \"title\": \"Sales-video task\",\n"
+                "       \"type\": \"assignment\",\n"
+                "       \"description\": \"[Weight: 10 pts] Watch assigned videos and complete survey. Due noon, Tuesday Nov 4th.\"\n"
+                "     }]\n"
+                "   }\n"
+                "   \n"
+                "   **Example: Same reading mentioned with different contexts**\n"
+                "   \n"
+                "   Block 1 (Oct 22): 'Begin reading Chapter 3 for next week'\n"
+                "   → Extract: NO - just 'begin reading', no due date\n"
+                "   \n"
+                "   Block 2 (Oct 29): 'Chapter 3 reading due today. Discuss in class.'\n"
+                "   → Extract: YES - explicit due date 'Oct 29'\n"
+                "   \n"
+                "   Block 3 (Nov 5): 'Refer back to Chapter 3 from last month'\n"
+                "   → Extract: NO - reference to past reading, not a new task\n"
+                "   \n"
+                "   Result: Extract ONCE in Block 2 with date='Oct 29'\n"
+                "   \n"
+                "   **CRITICAL RULES**:\n"
+                "   - Each unique assignment/task should appear ONCE in the final output\n"
+                "   - Always use the explicit DUE date, never the 'get started' date\n"
+                "   - Skip past-tense reminders ('you should have completed')\n"
+                "   - If unsure whether it's a duplicate, extract it (better than missing a task)\n"
+                "\n"
+                "5. CONDITIONAL TASK DETECTION:\n"
+                "   Many syllabi contain optional or conditional tasks that only apply to certain students.\n"
+                "   Identify these tasks and mark them appropriately to help students understand requirements.\n"
+                "   \n"
+                "   **Conditional Keywords** (indicating optional/conditional tasks):\n"
+                "   - 'if you are X' / 'if you want to X'\n"
+                "   - 'for those who' / 'for students who'\n"
+                "   - 'students who already' / 'those who did not'\n"
+                "   - 'OR' (indicating an alternative)\n"
+                "   - 'optional' / 'optionally'\n"
+                "   - 'alternative to X'\n"
+                "   - 'only if' / 'unless you'\n"
+                "   - 'choose one of' / 'pick either'\n"
+                "   \n"
+                "   **Detection Strategy**:\n"
+                "   - When you see these keywords, set is_optional=true\n"
+                "   - Extract the full conditional clause into the 'conditions' field\n"
+                "   - Be specific about who the condition applies to\n"
+                "   - Capture both positive conditions ('for those who') and negative conditions ('those who did not')\n"
+                "   \n"
+                "   **Examples**:\n"
+                "   \n"
+                "   Example 1: Optional survey for certain students\n"
+                "   - Text: 'Students who already know Story of the Tree should fill out this survey'\n"
+                "   - Detection: 'Students who already' → conditional keyword\n"
+                "   - Output:\n"
+                "     {\n"
+                "       \"title\": \"Story of the Tree Survey\",\n"
+                "       \"type\": \"assignment\",\n"
+                "       \"is_optional\": true,\n"
+                "       \"conditions\": \"Only for students who already took similar course\"\n"
+                "     }\n"
+                "   \n"
+                "   Example 2: Conditional videos based on background\n"
+                "   - Text: 'For those who did not learn negotiations from Barry Nalebuff, watch his videos'\n"
+                "   - Detection: 'For those who did not' → conditional keyword\n"
+                "   - Output:\n"
+                "     {\n"
+                "       \"title\": \"Barry Nalebuff Negotiation Videos\",\n"
+                "       \"type\": \"reading\",\n"
+                "       \"is_optional\": true,\n"
+                "       \"conditions\": \"Only for students without Core Negotiations background\"\n"
+                "     }\n"
+                "   \n"
+                "   Example 3: Alternative assignment option\n"
+                "   - Text: 'If you are unhappy with your Job-Score, write up a 1-page reflection'\n"
+                "   - Detection: 'If you are' → conditional keyword\n"
+                "   - Output:\n"
+                "     {\n"
+                "       \"title\": \"Job-Score Reflection\",\n"
+                "       \"type\": \"assignment\",\n"
+                "       \"description\": \"1-page write-up reflecting on Job-Case performance\",\n"
+                "       \"is_optional\": true,\n"
+                "       \"conditions\": \"Alternative for students unhappy with Job-Case Score\"\n"
+                "     }\n"
+                "   \n"
+                "   Example 4: Multiple assignment options\n"
+                "   - Text: 'Choose either the written analysis OR the video presentation'\n"
+                "   - Detection: 'either...OR' → alternative options\n"
+                "   - Output: Create TWO tasks, both with is_optional=true\n"
+                "     Task 1: {\"title\": \"Written Analysis\", \"is_optional\": true, \"conditions\": \"Choose one: written analysis or video\"}\n"
+                "     Task 2: {\"title\": \"Video Presentation\", \"is_optional\": true, \"conditions\": \"Choose one: written analysis or video\"}\n"
+                "   \n"
+                "   **CRITICAL RULES**:\n"
+                "   - Default is_optional to false unless conditional keywords detected\n"
+                "   - Be specific in conditions field - explain WHO the task is for or WHEN it applies\n"
+                "   - Extract both the requirement AND the condition\n"
+                "   - If conditions field is empty, set it to empty string (not null)\n"
+                "\n"
+                "6. TYPE CLASSIFICATION RULES:\n"
+                "   CRITICAL: Correctly classify tasks to distinguish graded work from non-graded readings.\n"
+                "   The type field determines how students see and prioritize tasks in the UI.\n"
+                "   \n"
+                "   **Type Categories**:\n"
+                "   - 'assignment': Graded work (papers, projects, surveys, videos, case analyses, write-ups)\n"
+                "   - 'exam': Tests, quizzes, midterms, finals\n"
+                "   - 'project': Major graded projects (can overlap with assignment)\n"
+                "   - 'reading': NON-GRADED reading materials ONLY (textbook chapters, articles, prep materials)\n"
+                "   - 'administrative': Non-academic tasks (registration, forms, etc.)\n"
+                "   \n"
+                "   **Classification Strategy**:\n"
+                "   1. **FIRST PRIORITY - Check Assessment Components**:\n"
+                "      - If task title/name appears in {assessment_components}, it's GRADED\n"
+                "      - Graded items are NEVER type='reading'\n"
+                "      - Use type='assignment' for graded work (even if it involves watching videos or reading)\n"
+                "   \n"
+                "   2. **SECOND PRIORITY - Check for Point Values**:\n"
+                "      - If text mentions points, percentage, or weight → type='assignment' or 'exam'\n"
+                "      - Examples: '10 pts', '5% of grade', 'worth 50 points'\n"
+                "   \n"
+                "   3. **THIRD PRIORITY - Check Keywords**:\n"
+                "      - Exam keywords: 'exam', 'test', 'quiz', 'midterm', 'final' → type='exam'\n"
+                "      - Assignment keywords: 'paper', 'project', 'write-up', 'presentation', 'case analysis', \n"
+                "        'submit', 'turn in', 'upload', 'survey', 'video task' → type='assignment'\n"
+                "      - Reading keywords (ONLY if not graded): 'read chapter', 'read article', 'textbook', \n"
+                "        'preparatory reading' → type='reading'\n"
+                "   \n"
+                "   4. **DEFAULT BEHAVIOR**:\n"
+                "      - If unclear and no points mentioned → default to type='reading' for readings\n"
+                "      - If unclear and mentions submission/due date → default to type='assignment'\n"
+                "   \n"
+                "   **Examples**:\n"
+                "   \n"
+                "   Example 1: Graded video task (Sales-video)\n"
+                "   - assessment_components includes: {\"name\": \"Sales-video task\", \"weight\": \"10 pts\"}\n"
+                "   - Text: 'Watch assigned videos and complete survey, due Nov 4th'\n"
+                "   - Classification: Appears in assessment_components → GRADED\n"
+                "   - Output: type='assignment' (NOT 'reading', even though it involves watching videos)\n"
+                "   \n"
+                "   Example 2: Non-graded reading\n"
+                "   - assessment_components: [does not include this reading]\n"
+                "   - Text: 'Read Chapter 3 of textbook before class'\n"
+                "   - Classification: Not in assessment_components, no points → NOT GRADED\n"
+                "   - Output: type='reading'\n"
+                "   \n"
+                "   Example 3: Graded paper\n"
+                "   - assessment_components includes: {\"name\": \"Final Paper\", \"weight\": \"30%\"}\n"
+                "   - Text: 'Final Paper due Dec 15 - 10 pages on negotiation strategies'\n"
+                "   - Classification: Appears in assessment_components → GRADED\n"
+                "   - Output: type='assignment'\n"
+                "   \n"
+                "   Example 4: Midterm exam\n"
+                "   - assessment_components includes: {\"name\": \"Midterm\", \"weight\": \"25%\"}\n"
+                "   - Text: 'Midterm exam covering weeks 1-6, Nov 15th'\n"
+                "   - Classification: Appears in assessment_components + 'exam' keyword → GRADED EXAM\n"
+                "   - Output: type='exam'\n"
+                "   \n"
+                "   Example 5: Graded case analysis (even if involves reading)\n"
+                "   - assessment_components includes: {\"name\": \"Job-Case\", \"weight\": \"15 pts\"}\n"
+                "   - Text: 'Read Job-Case and write 2-page analysis, due Oct 29'\n"
+                "   - Classification: Appears in assessment_components + 'write' keyword → GRADED\n"
+                "   - Output: type='assignment' (NOT 'reading', even though it involves reading)\n"
+                "   \n"
+                "   **CRITICAL RULES**:\n"
+                "   - ALWAYS check {assessment_components} FIRST before assigning type\n"
+                "   - If task matches an assessment component name (even partially), it MUST be type='assignment', 'exam', or 'project'\n"
+                "   - Type 'reading' is ONLY for non-graded preparatory materials\n"
+                "   - When in doubt between 'reading' and 'assignment', choose 'assignment' if there's ANY indication of grading\n"
+                "   - Graded activities involving videos, surveys, or reading are still type='assignment'\n"
+                "\n"
+                "7. If the block mentions a graded assessment component (by name or close variant), link it "
                 "via 'assessment_name' in the corresponding hard_deadline.\n"
-                "4. DETAILED DESCRIPTION REQUIREMENTS:\n"
+                "8. DETAILED DESCRIPTION REQUIREMENTS:\n"
                 "   - ALWAYS include page numbers for readings when specified (e.g., 'pp. 15-82', 'pages 83-102', 'Chapter 3 pp. 45-67').\n"
                 "   - ALWAYS include point values when mentioned (e.g., 'Worth 10 pts', '15 points', '50 pts').\n"
                 "   - ALWAYS include word count requirements when specified (e.g., '100-200 words', '500 word reflection').\n"
                 "   - ALWAYS include length requirements (e.g., '3-4 pages', '10 minute presentation').\n"
                 "   - ALWAYS capture specific deliverable requirements (e.g., 'video response', 'written analysis', 'group presentation').\n"
                 "   - Extract ALL specific details from the text - descriptions can be up to 300 characters.\n"
-                "5. ASSESSMENT COMPONENT WEIGHT ENRICHMENT:\n"
+                "9. ASSESSMENT COMPONENT WEIGHT ENRICHMENT:\n"
                 "   - When matching a hard_deadline to an assessment_component, check the component's weight/points.\n"
                 "   - If the component has a weight, include it at the START of the description in format: '[Weight: X pts]' or '[Weight: X%]'\n"
                 "   - Example: '[Weight: 50 pts] 3-4 page write-up with planning document. Due Dec 15th.'\n"
@@ -429,7 +709,9 @@ def extract_with_crew_ai(
                 "      \"title\": \"...\",\n"
                 "      \"type\": \"assignment\" | \"exam\" | \"project\" | \"assessment\" | \"administrative\",\n"
                 "      \"description\": \"detailed description (max 300 chars, include page numbers, point values, word counts, all specific requirements)\",\n"
-                "      \"assessment_name\": \"optional, name from assessment_components if matched\"\n"
+                "      \"assessment_name\": \"optional, name from assessment_components if matched\",\n"
+                "      \"is_optional\": true | false,\n"
+                "      \"conditions\": \"optional, conditional text if is_optional=true (e.g., 'Only for students who...')\"\n"
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
@@ -465,16 +747,45 @@ def extract_with_crew_ai(
         )
         
         all_items = []
-        for block in schedule_blocks:  # Process all blocks
+        # Create list of graded component names for type classification reminder
+        graded_names = [comp.get("name", "") for comp in (assessment_components or []) if comp.get("name")]
+        graded_reminder = (
+            f"\n\nREMINDER: The following components are GRADED and should be type='assignment' or 'exam' (NEVER 'reading'):\n"
+            f"{', '.join(graded_names) if graded_names else 'None specified'}"
+        )
+        
+        for idx, block in enumerate(schedule_blocks, 1):  # Process all blocks
+            # Convert session_dates_map to array format for Agent 2 compatibility
+            # Agent 2 expects: [{"session_number": 1, "date": "Oct 22"}, ...]
+            session_dates_array = [
+                {"session_number": sess_num, "date": date}
+                for sess_num, date in sorted(session_dates_map.items())
+            ]
+            
             block_inputs = {
-                "block_text": block.get("raw_block", ""),
+                "block_text": block.get("raw_block", "") + graded_reminder,
                 "date_string": block.get("date_string", ""),
-                "session_dates": json.dumps(session_dates, indent=2),
+                "session_dates": json.dumps(session_dates_array, indent=2),
                 "assessment_components": json.dumps(assessment_components or [], indent=2),
             }
             
+            # DEBUG: Log Agent 2 input for blocks with forward references
+            if any(pattern in block.get("raw_block", "") for pattern in ["Class 2", "Class 4", "by class #", "Multi-party"]):
+                print(f"\n🔍 DEBUG Agent 2 Input for Block {idx} (date: {block.get('date_string')})")
+                print(f"   Full block text: '''{block.get('raw_block', '')}'''")
+                print(f"   Session dates available: {len(session_dates_array)} sessions")
+                if len(session_dates_array) <= 6:  # Only print for small syllabus
+                    print(f"   Session dates passed to Agent 2:")
+                    for sd in session_dates_array:
+                        print(f"      Session {sd['session_number']} → {sd['date']}")
+            
             ext_result = extraction_crew.kickoff(inputs=block_inputs)
             ext_str = ext_result.raw if hasattr(ext_result, 'raw') else str(ext_result)
+            
+            # DEBUG: Log Agent 2 output for blocks with forward references
+            if any(pattern in block.get("raw_block", "") for pattern in ["Class 2", "Class 4", "by class #", "Multi-party"]):
+                print(f"\n🔍 DEBUG Agent 2 Output for Block {idx}:")
+                print(f"   Raw output (first 800 chars): {ext_str[:800]}...")
             
             try:
                 items = json.loads(ext_str.strip())
@@ -492,6 +803,111 @@ def extract_with_crew_ai(
         if not all_items:
             return {"success": False, "error": "No items extracted", "items_with_workload": []}
         
+        # ============================================================================
+        # READING OVERLAP CONSOLIDATION (Phase 3 Task 3.4)
+        # Addresses Issue #7: HBS reading duplicates (Chapters 1-3 and Chapter 3)
+        # ============================================================================
+        def consolidate_overlapping_readings(items):
+            """
+            Consolidate reading assignments where one encompasses another.
+            E.g., "Read chapters 1-3" encompasses "Read chapter 3"
+            
+            Strategy:
+            1. Group readings by date
+            2. Parse chapter/page ranges from titles
+            3. For overlapping ranges on same date, keep the broader one
+            4. Preserve all non-reading items unchanged
+            """
+            reading_items = [item for item in items if item.get("type") == "reading" or 
+                           (item.get("kind") == "class_session" and 
+                            (item.get("prep_tasks") or item.get("mandatory_tasks")))]
+            other_items = [item for item in items if item not in reading_items]
+            
+            def parse_chapters(title):
+                """Extract chapter numbers from reading titles."""
+                # Match "chapter 1-3", "chapters 1-3", "chapter 3", "Ch. 1-2"
+                match = re.search(r'(?:chapter|ch\.?)[s]?\s+(\d+)(?:\s*[-–—]\s*(\d+))?', 
+                                title.lower())
+                if match:
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else start
+                    return set(range(start, end + 1))
+                return set()
+            
+            def parse_pages(title):
+                """Extract page numbers from reading titles."""
+                # Match "pp. 15-82", "pages 83-102", "p. 45"
+                match = re.search(r'(?:pp?\.?|pages?)\s+(\d+)(?:\s*[-–—]\s*(\d+))?', 
+                                title.lower())
+                if match:
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else start
+                    return set(range(start, end + 1))
+                return set()
+            
+            def get_reading_range(title):
+                """Get combined chapter and page range for comparison."""
+                chapters = parse_chapters(title)
+                pages = parse_pages(title)
+                return (chapters, pages)
+            
+            # Group readings by date
+            readings_by_date = {}
+            for item in reading_items:
+                date = item.get("date_string") or item.get("date", "")
+                if date not in readings_by_date:
+                    readings_by_date[date] = []
+                readings_by_date[date].append(item)
+            
+            # Consolidate per date
+            consolidated = []
+            for date, readings in readings_by_date.items():
+                if len(readings) == 1:
+                    consolidated.extend(readings)
+                    continue
+                
+                # Find overlapping readings
+                kept_readings = []
+                for i, reading in enumerate(readings):
+                    title = reading.get("title", "")
+                    if reading.get("kind") == "class_session":
+                        # For class sessions, check prep_tasks and mandatory_tasks
+                        kept_readings.append(reading)
+                        continue
+                    
+                    chapters_i, pages_i = get_reading_range(title)
+                    
+                    # Check if this reading is encompassed by another
+                    is_encompassed = False
+                    for j, other in enumerate(readings):
+                        if i == j:
+                            continue
+                        other_title = other.get("title", "")
+                        chapters_j, pages_j = get_reading_range(other_title)
+                        
+                        # Check if reading i is fully contained in reading j
+                        if chapters_i and chapters_j and chapters_i.issubset(chapters_j) and len(chapters_j) > len(chapters_i):
+                            is_encompassed = True
+                            break
+                        if pages_i and pages_j and pages_i.issubset(pages_j) and len(pages_j) > len(pages_i):
+                            is_encompassed = True
+                            break
+                    
+                    if not is_encompassed:
+                        kept_readings.append(reading)
+                
+                consolidated.extend(kept_readings)
+            
+            # DEBUG: Log consolidation results
+            removed_count = len(reading_items) - len(consolidated)
+            if removed_count > 0:
+                print(f"\n🔍 DEBUG Reading Consolidation - Removed {removed_count} overlapping readings")
+            
+            return consolidated + other_items
+        
+        # Apply reading consolidation
+        all_items = consolidate_overlapping_readings(all_items)
+        
         # Flatten nested structure: extract hard_deadlines AND readings from schedule blocks
         flattened_items = []
         for item in all_items:
@@ -504,6 +920,8 @@ def extract_with_crew_ai(
                         "type": deadline.get("type", "assignment"),
                         "description": deadline.get("description", ""),
                         "assessment_name": deadline.get("assessment_name", ""),
+                        "is_optional": deadline.get("is_optional", False),
+                        "conditions": deadline.get("conditions", ""),
                     })
             elif item.get("kind") == "class_session":
                 # Extract readings and prep tasks as individual items
@@ -554,6 +972,8 @@ def extract_with_crew_ai(
                         "type": deadline.get("type", "assignment"),
                         "description": deadline.get("description", ""),
                         "assessment_name": deadline.get("assessment_name", ""),
+                        "is_optional": deadline.get("is_optional", False),
+                        "conditions": deadline.get("conditions", ""),
                     })
         
         print(f"\n🔍 DEBUG Flattening - {len(flattened_items)} individual deadlines extracted")
@@ -602,7 +1022,50 @@ def extract_with_crew_ai(
                 "1. Check coverage: For each SPECIFIC assessment component (exams, papers, projects with due dates), "
                 "verify there is a corresponding 'hard_deadline'. IGNORE general/ongoing components like 'Participation' or 'Attendance'.\n"
                 "2. Identify missing assessments: SPECIFIC components that appear in grading but have no dated hard_deadline.\n"
-                "3. Detect duplicates or conflicts: the same exam/assignment with multiple dates, etc.\n"
+                "3. ADVANCED DUPLICATE DETECTION:\n"
+                "   Detect tasks with identical or very similar titles appearing on multiple dates.\n"
+                "   This often happens when syllabi mention assignments multiple times:\n"
+                "   - First mention: 'Get started on X' or 'Begin working on X' (earlier date)\n"
+                "   - Second mention: 'X due today' or 'Submit X' (actual due date)\n"
+                "   - Third mention: 'You should have completed X' (past-due reminder)\n"
+                "   \n"
+                "   **Detection Strategy**:\n"
+                "   - Group tasks by title similarity (exact match or very close)\n"
+                "   - For each group with multiple dates, identify the ACTUAL due date\n"
+                "   - Keep ONLY the task with the latest/actual due date\n"
+                "   - Remove earlier 'get started' mentions and later 'past due' reminders\n"
+                "   \n"
+                "   **Examples**:\n"
+                "   \n"
+                "   Example 1: Sales-video task appearing 3 times\n"
+                "   - Input items:\n"
+                "     * 'Sales-video task' on Oct 29 (description: 'get started on Sales-video task, due Nov 4')\n"
+                "     * 'Sales-video task' on Nov 4 (description: 'Sales-video task due today at noon')\n"
+                "     * 'Sales-video task' on Nov 5 (description: 'should have completed Sales-video by yesterday')\n"
+                "   - Analysis:\n"
+                "     * Oct 29: Introduction/start date (NOT actual due date)\n"
+                "     * Nov 4: Actual due date (KEEP THIS ONE)\n"
+                "     * Nov 5: Past-due reminder (NOT actual due date)\n"
+                "   - Action: Keep only Nov 4, remove Oct 29 and Nov 5\n"
+                "   - Report: Add to inconsistencies: {\"type\": \"duplicate_deadline\", \"details\": \"Removed 2 duplicate mentions of Sales-video task, kept Nov 4 due date\"}\n"
+                "   \n"
+                "   Example 2: Assignment mentioned twice\n"
+                "   - Input items:\n"
+                "     * 'Final Paper' on Nov 12 (description: 'start thinking about final paper')\n"
+                "     * 'Final Paper' on Dec 15 (description: 'Final Paper due - 10 pages')\n"
+                "   - Analysis:\n"
+                "     * Nov 12: Reminder to start (NOT due date)\n"
+                "     * Dec 15: Actual due date with deliverable details (KEEP THIS ONE)\n"
+                "   - Action: Keep only Dec 15, remove Nov 12\n"
+                "   - Report: Add to inconsistencies: {\"type\": \"duplicate_deadline\", \"details\": \"Removed 1 early mention of Final Paper, kept Dec 15 due date\"}\n"
+                "   \n"
+                "   **CRITICAL RULES**:\n"
+                "   - For graded items (assignments, exams, projects), each task should appear ONCE with its actual due date\n"
+                "   - Always keep the LATEST date when multiple dates exist for same task\n"
+                "   - Remove all earlier mentions that say 'get started', 'begin working', 'consider'\n"
+                "   - Remove all later mentions that say 'should have completed', 'was due yesterday'\n"
+                "   - Report all removed duplicates in inconsistencies array\n"
+                "   \n"
                 "4. Identify unmatched deadlines: hard_deadlines that do not clearly map to any graded component.\n"
                 "5. Perform global sanity checks (e.g., a 40% Final Exam that never appears in the schedule).\n"
                 "6. Optionally adjust obvious misclassifications (e.g., 'Final Exam' marked as 'assignment' instead of 'exam').\n\n"
@@ -610,16 +1073,20 @@ def extract_with_crew_ai(
                 "- Do NOT create new deadline items for assessment components that lack specific dates in the schedule.\n"
                 "- Do NOT invent dates or create generic deadlines (e.g., 'Class Participation' without a specific date).\n"
                 "- Only report missing assessments - do NOT add them to validated_items.\n"
-                "- Remove true duplicates from validated_items but preserve all legitimate deadline items.\n\n"
+                "- Remove true duplicates from validated_items but preserve all legitimate deadline items.\n"
+                "- For duplicate detection, focus on graded items (assignments, exams, projects) - readings can appear multiple times if legitimately scheduled.\n\n"
                 "OUTPUT FORMAT:\n"
                 "Return a single JSON object:\n"
                 "{\n"
-                "  \"validated_items\": [ /* final list of items, possibly slightly corrected */ ],\n"
+                "  \"validated_items\": [ /* final list with duplicates removed */ ],\n"
                 "  \"missing_assessments\": [ {\"component_name\": \"...\", \"reason\": \"...\"} ],\n"
                 "  \"unmatched_deadlines\": [ {\"title\": \"...\", \"date\": \"...\", \"reason\": \"...\"} ],\n"
-                "  \"inconsistencies\": [ {\"type\": \"duplicate_deadline\" | \"conflicting_type\" | \"grading_mismatch\" | \"other\", \"details\": \"...\"} ],\n"
+                "  \"inconsistencies\": [ \n"
+                "    {\"type\": \"duplicate_deadline\", \"details\": \"Removed X duplicate mentions of Y, kept Z date\"},\n"
+                "    {\"type\": \"conflicting_type\" | \"grading_mismatch\" | \"other\", \"details\": \"...\"} \n"
+                "  ],\n"
                 "  \"other_anomalies\": [ {\"type\": \"...\", \"details\": \"...\"} ],\n"
-                "  \"summary\": \"Short natural language summary of QA findings.\"\n"
+                "  \"summary\": \"Short natural language summary of QA findings including duplicate removal.\"\n"
                 "}\n"
             ),
             expected_output=(
@@ -658,6 +1125,103 @@ def extract_with_crew_ai(
         if validated_items:
             print(f"   Sample from Agent 3: {json.dumps(validated_items[0], indent=2)}")
             print(f"   Agent 3 keys: {list(validated_items[0].keys())}")
+        
+        # ============================================================================
+        # ADVANCED DUPLICATE DETECTION (Phase 4 Task 4.1)
+        # Addresses Issues #3, #11: Duplicate tasks across dates
+        # ============================================================================
+        def parse_date_for_sorting(date_str):
+            """
+            Parse various date formats for sorting. Return datetime or fallback.
+            Supports: 'Oct 22', 'October 22', '10/22/2024', '10/22', '2024-10-22'
+            """
+            if not date_str:
+                return datetime.min
+            
+            try:
+                # Try common formats
+                for fmt in ["%b %d", "%B %d", "%m/%d/%Y", "%m/%d", "%Y-%m-%d"]:
+                    try:
+                        dt = datetime.strptime(date_str.strip(), fmt)
+                        # If no year provided (e.g., "Oct 22"), use current year
+                        if dt.year == 1900:
+                            dt = dt.replace(year=datetime.now().year)
+                        return dt
+                    except:
+                        continue
+                # Fallback: try to extract numbers for basic sorting
+                import re
+                nums = re.findall(r'\d+', date_str)
+                if nums:
+                    return datetime(2024, int(nums[0]), int(nums[1]) if len(nums) > 1 else 1)
+                return datetime.min
+            except:
+                return datetime.min
+        
+        def deduplicate_by_title_keep_latest(items):
+            """
+            For graded items with same title, keep only the one with latest date.
+            This removes duplicate mentions like 'get started on X' (early) vs 'X due today' (actual).
+            """
+            # Group by (type, normalized_title) for graded items only
+            groups = {}
+            non_graded = []
+            
+            for item in items:
+                item_type = item.get("type", "")
+                if item_type in ["assignment", "exam", "project", "assessment"]:
+                    # Normalize title for grouping (lowercase, strip whitespace)
+                    title = (item.get("title") or "").strip().lower()
+                    key = (item_type, title)
+                    if key not in groups:
+                        groups[key] = []
+                    groups[key].append(item)
+                else:
+                    # Keep non-graded items (readings, etc.) unchanged
+                    non_graded.append(item)
+            
+            # For each group, keep item with latest date
+            deduplicated = []
+            duplicate_count = 0
+            
+            for key, group_items in groups.items():
+                if len(group_items) > 1:
+                    # Parse dates and find latest
+                    items_with_dates = []
+                    for item in group_items:
+                        date_str = item.get("date", "")
+                        parsed_date = parse_date_for_sorting(date_str)
+                        items_with_dates.append((parsed_date, date_str, item))
+                        # DEBUG: Log parsing for "watch strategy videos" duplicates
+                        if "strategy video" in (item.get("title") or "").lower() or \
+                           ("watch" in (item.get("title") or "").lower() and "video" in (item.get("title") or "").lower()):
+                            print(f"   🔍 Parsing duplicate: '{item.get('title')}' date='{date_str}' → parsed={parsed_date}")
+                    
+                    # Sort by parsed date (latest first)
+                    items_with_dates.sort(reverse=True, key=lambda x: x[0])
+                    latest_item = items_with_dates[0][2]
+                    latest_date = items_with_dates[0][1]
+                    
+                    deduplicated.append(latest_item)
+                    duplicate_count += len(group_items) - 1
+                    
+                    # Log duplicate removal
+                    removed_dates = [x[1] for x in items_with_dates[1:]]
+                    print(f"   🔧 Deduplicated '{latest_item.get('title')}': kept {latest_date}, removed {len(removed_dates)} earlier mentions ({', '.join(removed_dates)})")
+                else:
+                    # Only one item with this title, keep it
+                    deduplicated.append(group_items[0])
+            
+            # Add back non-graded items
+            deduplicated.extend(non_graded)
+            
+            if duplicate_count > 0:
+                print(f"\n🔍 DEBUG Advanced Duplicate Detection - Removed {duplicate_count} duplicate tasks across dates")
+            
+            return deduplicated
+        
+        # Apply advanced duplicate detection
+        validated_items = deduplicate_by_title_keep_latest(validated_items)
         
         # Step 5: Second deduplication pass after Agent 3 (in case QA created duplicates)
         deduplicated_items = []
@@ -752,12 +1316,28 @@ def extract_with_crew_ai(
         print(f"\n🔍 DEBUG Agent 4 Raw Output (first 500 chars): {workload_str[:500]}")
         
         try:
-            items_with_workload = json.loads(workload_str.strip())
+            # PHASE 5 TASK 5.2: Strip markdown code fences if present
+            # Agent 4 sometimes wraps JSON in ```json ... ``` which breaks parsing
+            clean_str = workload_str.strip()
+            
+            # Remove opening code fence (```json or ```)
+            if clean_str.startswith('```'):
+                # Find end of first line (the opening fence)
+                first_newline = clean_str.find('\n')
+                if first_newline != -1:
+                    clean_str = clean_str[first_newline + 1:]
+            
+            # Remove closing code fence (```)
+            if clean_str.endswith('```'):
+                clean_str = clean_str[:-3].rstrip()
+            
+            items_with_workload = json.loads(clean_str)
             if not isinstance(items_with_workload, list):
                 print(f"   ⚠️ WARNING: Agent 4 returned non-list type: {type(items_with_workload)}")
                 items_with_workload = validated_items
         except Exception as e:
             print(f"   ⚠️ WARNING: Agent 4 JSON parsing failed: {str(e)}")
+            print(f"   Attempted to parse: {workload_str[:200]}...")
             items_with_workload = validated_items
         
         # DEBUG: Log Agent 4 output and validate workload fields were added

@@ -25,7 +25,8 @@ const TaskModal = ({ task, onClose, onSave }) => {
         deadline: task.deadline?.slice(0, 16) || '',
         priority: task.priority || 'medium',
         task_type: task.task_type || 'assignment',
-        estimated_hours: task.estimated_hours || 5,
+        // Phase 5 Task 5.2: Use nullish coalescing to preserve 0-hour tasks
+        estimated_hours: task.estimated_hours ?? 5,  // Only default if null/undefined, not if 0
         is_optional: task.is_optional || false,
         conditions: task.conditions || ''
       });

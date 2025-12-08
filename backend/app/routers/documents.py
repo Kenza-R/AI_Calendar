@@ -369,13 +369,32 @@ async def upload_syllabus_crewai(
             db.add(new_event)
             db.flush()
             
-            # Create task with workload estimate
+            # Create task with ALL workload estimate fields (Phase 5 Task 5.2)
             estimated_hours = item.get("estimated_hours", 5)
             workload_breakdown = item.get("workload_breakdown", "")
+            confidence = item.get("confidence", "")
+            notes = item.get("notes", "")
             
+            # Build comprehensive task description with workload details
             task_description = item.get("description", "")
+            
+            # Append workload breakdown if present
             if workload_breakdown:
                 task_description += f"\n\n⏱️ Workload: {workload_breakdown}"
+            
+            # Append confidence level if present
+            if confidence:
+                confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(confidence.lower(), "")
+                task_description += f"\n{confidence_emoji} Confidence: {confidence.title()}"
+            
+            # Append notes if present
+            if notes:
+                task_description += f"\n📝 Notes: {notes}"
+            
+            # Debug log to track workload data preservation
+            print(f"   💾 Saving task '{item.get('title')}' with estimated_hours={estimated_hours}")
+            if workload_breakdown or confidence or notes:
+                print(f"      Workload details: breakdown={bool(workload_breakdown)}, confidence={confidence}, notes={bool(notes)}")
             
             # Extract optional/conditional information
             is_optional = item.get("is_optional", False)
