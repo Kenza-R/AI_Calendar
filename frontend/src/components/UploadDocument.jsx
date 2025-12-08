@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { documentsAPI } from '../services/api';
+import BulldogLoader from './BulldogLoader';
 import './UploadDocument.css';
 
 const UploadDocument = ({ onUploadSuccess }) => {
@@ -7,6 +8,7 @@ const UploadDocument = ({ onUploadSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [uploadStartTime, setUploadStartTime] = useState(null);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -32,8 +34,8 @@ const UploadDocument = ({ onUploadSuccess }) => {
       setError('Please select a file first.');
       return;
     }
-
     setLoading(true);
+    setUploadStartTime(Date.now());
     setError('');
 
     try {
@@ -83,9 +85,12 @@ const UploadDocument = ({ onUploadSuccess }) => {
             className="btn-upload"
             disabled={!file || loading}
           >
-            {loading ? 'Processing...' : 'Upload & Extract'}
           </button>
         </div>
+
+        {loading && uploadStartTime && (
+          <BulldogLoader startTime={uploadStartTime} />
+        )}
 
         {error && (
           <div className="error-message">
