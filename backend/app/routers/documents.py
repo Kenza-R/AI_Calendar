@@ -198,6 +198,7 @@ async def upload_syllabus_crewai(
             )
         
         items_with_workload = extraction_result.get("items_with_workload", [])
+        course_name = extraction_result.get("course_name", "Unknown Course")
         
         # Extract semester info for date parsing
         if file_extension == ".pdf":
@@ -412,7 +413,8 @@ async def upload_syllabus_crewai(
                 is_optional=is_optional,
                 conditions=conditions,
                 source_type="syllabus_crewai",
-                source_file=file.filename
+                source_file=file.filename,
+                course_name=course_name
             )
             
             db.add(new_task)

@@ -12,6 +12,7 @@ class TaskBase(BaseModel):
     estimated_hours: Optional[int] = None
     is_optional: Optional[bool] = False
     conditions: Optional[str] = None
+    course_name: Optional[str] = None
 
 
 class TaskCreate(TaskBase):
@@ -28,6 +29,7 @@ class TaskUpdate(BaseModel):
     estimated_hours: Optional[int] = None
     is_optional: Optional[bool] = None
     conditions: Optional[str] = None
+    course_name: Optional[str] = None
 
 
 class TaskResponse(TaskBase):
@@ -39,6 +41,7 @@ class TaskResponse(TaskBase):
     source_type: Optional[str] = None
     is_optional: bool
     conditions: Optional[str] = None
+    course_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

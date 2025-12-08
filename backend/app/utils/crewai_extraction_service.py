@@ -219,6 +219,28 @@ def extract_with_crew_ai(
         lines = text.splitlines()
         indexed_lines = [{"index": i, "text": line} for i, line in enumerate(lines)]
         
+        # Extract course name from syllabus (first 1000 chars)
+        course_name = "Unknown Course"
+        text_preview = text[:1000]
+        # Look for common course name patterns
+        import re
+        course_patterns = [
+            r'Course[:\s]+([A-Z][^\n]{5,60})',  # "Course: Negotiations"
+            r'([A-Z][A-Za-z\s&]+)\s+\d{3,4}',  # "Negotiations 880" or "Data Science 101"
+            r'^([A-Z][A-Za-z\s&]{5,50})\s*$',  # Standalone title on its own line
+        ]
+        for pattern in course_patterns:
+            match = re.search(pattern, text_preview, re.MULTILINE)
+            if match:
+                course_name = match.group(1).strip()
+                # Clean up common prefixes/suffixes
+                course_name = re.sub(r'^(Course|Class|Subject)\s*:?\s*', '', course_name, flags=re.IGNORECASE)
+                course_name = re.sub(r'\s+Syllabus$', '', course_name, flags=re.IGNORECASE)
+                if len(course_name) >= 5:  # Valid course name
+                    break
+        
+        print(f"\n📚 Detected Course Name: {course_name}")
+        
         # Extract date candidates
         date_candidates = extract_date_candidates(indexed_lines)
         
@@ -1414,6 +1436,7 @@ def extract_with_crew_ai(
             "qa_report": qa_data,
             "total_estimated_hours": total_hours,
             "items_count": len(items_with_workload),
+            "course_name": course_name,
         }
     
     except Exception as e:

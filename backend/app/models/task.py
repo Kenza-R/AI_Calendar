@@ -22,6 +22,7 @@ class Task(Base):
     conditions = Column(Text)  # Conditional requirements (e.g., "only for students without Core Negotiations")
     source_type = Column(String)  # syllabus, email, manual
     source_file = Column(String)  # path or reference to original document
+    course_name = Column(String)  # Name of the course (e.g., "Negotiations", "Data Science")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
