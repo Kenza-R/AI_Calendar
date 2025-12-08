@@ -7,6 +7,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 10000, // 10 second timeout
 });
 
 // Add token to requests if available
@@ -76,6 +77,8 @@ export const documentsAPI = {
     formData.append('file', file);
     return api.post('/documents/upload-syllabus-crewai', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000, // 5 minutes for AI processing (4 agents can take time)
+      validateStatus: (status) => status >= 200 && status < 300, // Only accept 2xx responses
     });
   },
   // Extract assessment components only
