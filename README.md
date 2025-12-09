@@ -145,6 +145,14 @@ For **Interview Prep** tasks, Scheduly generates:
 
 ## 🎬 Demo
 
+### 🎥 Watch Scheduly in Action
+
+https://github.com/user-attachments/assets/e07005a8-98da-4e89-bc24-71f7294566a8
+
+*See how easy it is to upload a syllabus, extract deadlines, and manage your schedule with AI.*
+
+---
+
 ### Try it Out
 
 Use the demo account to explore all features:
