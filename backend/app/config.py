@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: Optional[str] = None
     
+    # CORS
+    CORS_ORIGINS: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
