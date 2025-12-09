@@ -27,7 +27,6 @@ Scheduly is an intelligent productivity calendar designed for students and profe
 ### Why Scheduly?
 
 - 🎓 **For Students**: Upload course syllabi and automatically extract all assignments, exams, and deadlines
-- 💼 **For Job Seekers**: Track interviews and generate personalized prep materials
 - 🚀 **For Everyone**: Smart scheduling that actually understands your workload and availability
 
 ### Key Highlights
@@ -35,9 +34,8 @@ Scheduly is an intelligent productivity calendar designed for students and profe
 | Feature | Description |
 |---------|-------------|
 | 🤖 **AI-Powered Extraction** | Advanced 4-agent CrewAI pipeline parses even poorly-formatted syllabi |
-| 📚 **Smart Study Materials** | Auto-generates flashcards, quiz questions, and interview prep |
 | 🗓️ **Intelligent Scheduling** | Automatically schedules prep sessions while avoiding conflicts |
-| 🔄 **Calendar Integration** | Two-way sync with Google Calendar and Outlook |
+| 🔄 **Full Flexibility** | Allows for manual editing and addition of deadlines |
 | 📊 **Workload Analysis** | Real-time feasibility checking and time management insights |
 | 🔐 **Privacy-First** | Your data stays yours—secure JWT authentication and user isolation |
 
@@ -72,20 +70,6 @@ Scheduly is an intelligent productivity calendar designed for students and profe
 - **Quick event creation**: Click any time slot to add events
 - **Automatic event linking**: Tasks automatically create calendar events
 
-### 🤖 AI-Generated Study Materials
-For **Exam Prep** tasks, Scheduly generates:
-- **Flashcards**: Question/answer pairs for memorization (10 cards)
-- **Quiz Questions**: Multiple choice practice questions (5 questions with answers)
-- **Key Concepts**: Important topics to review
-- **Study Tips**: Personalized strategies for success
-- **Regenerate anytime**: Get fresh materials with one click
-
-For **Interview Prep** tasks, Scheduly generates:
-- **Company Research**: Key facts and information
-- **Common Questions**: 5-7 typical interview questions
-- **Topics to Review**: Technical and soft skills to prepare
-- **Success Tips**: Strategies using the STAR method
-
 ### 📊 Smart Schedule Optimization
 - **Auto-schedule prep sessions**: Automatically creates study blocks before deadlines
 - **Conflict detection**: Avoids scheduling over existing events
@@ -98,7 +82,7 @@ For **Interview Prep** tasks, Scheduly generates:
   - Track time utilization percentage
 - **Schedule overview**: View next 7, 14, or 30 days at a glance
 
-### 🔄 Calendar Integrations
+### 🔄 Calendar Integrations (currently under development)
 - **Google Calendar sync**: Import events from Google Calendar
 - **Outlook Calendar sync**: Import events from Microsoft Outlook
 - **Gmail scanning**: Extract deadlines from emails automatically
@@ -158,15 +142,6 @@ https://github.com/user-attachments/assets/e07005a8-98da-4e89-bc24-71f7294566a8
 Use the demo account to explore all features:
 - **Email**: `demo@example.com`
 - **Password**: `demo123`
-
-### Screenshots
-
-<details>
-<summary>📸 Click to view screenshots</summary>
-
-*Coming soon: Calendar view, Task management, Upload interface, AI-generated study materials*
-
-</details>
 
 ---
 
@@ -264,21 +239,6 @@ Open `http://localhost:5173` and login with:
 4. Add deadline and estimated study hours
 5. Click any task to view/edit details
 6. Check off tasks when complete
-
-</details>
-
-<details>
-<summary><strong>🤖 View AI Study Materials</strong></summary>
-
-<br>
-
-1. Open an **exam prep** or **interview prep** task
-2. Click **Show Prep Material** to access:
-   - 📇 Flashcards for memorization
-   - ❓ Quiz questions with answers
-   - 🎯 Key concepts to review
-   - 💡 Personalized study tips
-3. Click **Regenerate** anytime for fresh materials
 
 </details>
 
@@ -387,16 +347,6 @@ AI_Calendar/
 
 ---
 
-## 💼 Use Cases
-
-| User Type | Benefits |
-|-----------|----------|
-| 🎓 **Students** | Upload syllabi → Auto-extract deadlines → Generate study materials → Never miss assignments |
-| 💼 **Job Seekers** | Track interviews → Prep company research → Practice common questions → Schedule prep time |
-| 👔 **Professionals** | Manage deadlines → Track meetings → Balance workload → Integrate existing calendars |
-
----
-
 ## 📚 Documentation
 
 - **[API Documentation](http://localhost:8000/docs)** - Interactive Swagger UI (when running)
@@ -446,11 +396,6 @@ npm install
 ```
 
 ### Common Problems
-
-**"Tasks not showing prep material"**
-- Ensure task type is "exam_prep" or "interview_prep"
-- Check OpenAI API key is configured
-- Try clicking "Regenerate" button
 
 **"Upload not working"**
 - Check file format (PDF, TXT, or DOCX only)
@@ -704,12 +649,6 @@ cd frontend && npm test
 - ✅ Set realistic time estimates for better scheduling
 - ✅ Use high/medium/low priorities effectively
 - ✅ Check Schedule Overview weekly for workload insights
-
-### For Job Seekers
-- 💼 Create interview prep tasks immediately after scheduling
-- 💼 Use AI-generated company research as a starting point
-- 💼 Schedule multiple prep sessions spread across days
-- 💼 Regenerate materials for fresh practice questions
 
 ### Calendar Tips
 - 🗓️ **Arrow Keys**: Navigate between dates
